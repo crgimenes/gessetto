@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/crgimenes/gessetto/doc"
 	"github.com/hajimehoshi/ebiten/v2"
 )
 
@@ -46,10 +47,11 @@ func main() {
 }
 
 func usage(w io.Writer) {
-	_, _ = fmt.Fprint(w, `usage: gessetto [flags]
+	_, _ = fmt.Fprint(w, `usage: gessetto [flags] [image.png]
        gessetto -apply ops.filo -out out.png [in.png]
 
-Opinionated drawing and pixel-art editor. With -apply it opens no window:
+Opinionated drawing and pixel-art editor. Opens image.png, or a new 64x64
+image. With -apply it opens no window:
 it runs a Filo script of doc-* operations on in.png, or on the document the
 script creates with (doc-new w h), and writes the flattened result as PNG.
 
@@ -88,13 +90,9 @@ func parseArgs(args []string, stdout, stderr io.Writer) (opts options, code int,
 		return opts, 0, true
 	}
 	problem := ""
-	maxArgs := 0
-	if opts.apply != "" {
-		maxArgs = 1
-	}
 	switch {
-	case fs.NArg() > maxArgs:
-		problem = fmt.Sprintf("unexpected argument %q", fs.Arg(maxArgs))
+	case fs.NArg() > 1:
+		problem = fmt.Sprintf("unexpected argument %q", fs.Arg(1))
 	case opts.apply != "" && opts.out == "":
 		problem = "-apply needs -out"
 	case opts.apply == "" && opts.out != "":
@@ -112,7 +110,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (opts options, code int,
 func runWindow(opts options, stderr io.Writer) int {
 	ebiten.SetWindowSize(winW, winH)
 	ebiten.SetWindowSizeLimits(minW, minH, -1, -1)
-	ebiten.SetWindowTitle("gessetto")
+	ebiten.SetWindowTitle(baseTitle)
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	err := setWindowIcon()
 	if err != nil {
@@ -122,7 +120,15 @@ func runWindow(opts options, stderr io.Writer) int {
 	// the check at the top of Update, unsaved work dies with the process.
 	ebiten.SetWindowClosingHandled(true)
 
-	a := &app{debug: opts.debug, log: stderr}
+	d, err := doc.New(defaultNewPx, defaultNewPx)
+	if opts.input != "" {
+		d, err = readPNG(opts.input)
+	}
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "gessetto:", err)
+		return 1
+	}
+	a := newApp(d, opts.input, opts.debug, stderr)
 	a.event("start", "version="+Version)
 	err = ebiten.RunGame(a)
 	if err != nil {

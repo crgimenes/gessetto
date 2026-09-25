@@ -1,6 +1,9 @@
 package doc
 
-import "image"
+import (
+	"image"
+	"image/color"
+)
 
 // Flatten composites the layers bottom to top with straight-alpha "over".
 // The formula and its rounding are part of the corpus contract: every engine
@@ -19,8 +22,36 @@ func (d *Document) Flatten() *image.NRGBA {
 	return out
 }
 
+// FlattenInto composites only r into dst, which covers at least r, so a view
+// can refresh what one stroke touched instead of the whole canvas.
+func (d *Document) FlattenInto(dst *image.NRGBA, r image.Rectangle) {
+	r = r.Intersect(d.Bounds()).Intersect(dst.Rect)
+	row := r.Dx() * 4
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		o := dst.PixOffset(r.Min.X, y)
+		clear(dst.Pix[o : o+row])
+		for _, l := range d.layers {
+			i := l.Pix.PixOffset(r.Min.X, y)
+			over(dst.Pix[o:o+row], l.Pix.Pix[i:i+row])
+		}
+	}
+}
+
+// PixelAt is the composited color at (x, y), what an eyedropper picks.
+func (d *Document) PixelAt(x, y int) color.NRGBA {
+	var px [4]byte
+	if !(image.Point{x, y}).In(d.Bounds()) {
+		return color.NRGBA{}
+	}
+	for _, l := range d.layers {
+		i := l.Pix.PixOffset(x, y)
+		over(px[:], l.Pix.Pix[i:i+4])
+	}
+	return color.NRGBA{R: px[0], G: px[1], B: px[2], A: px[3]}
+}
+
 func over(dst, src []byte) {
-	for i := 0; i < len(dst); i += 4 {
+	for i := 0; i+3 < len(dst) && i+3 < len(src); i += 4 {
 		sa := uint32(src[i+3])
 		if sa == 0 {
 			continue

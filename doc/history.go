@@ -2,6 +2,7 @@ package doc
 
 import (
 	"image"
+	"slices"
 )
 
 const (
@@ -34,17 +35,30 @@ type entry struct {
 }
 
 // history keeps undo entries in list[:cursor] and redo entries after it.
+// saved is the cursor value that matches the file on disk, -1 when no reachable
+// state does.
 type history struct {
 	list    []entry
 	cursor  int
 	bytes   int
 	max     int
 	dropped int
+	saved   int
+
+	grouping bool
+	group    []entry
 }
 
 func (h *history) push(e entry) {
+	if h.grouping {
+		h.group = append(h.group, e)
+		return
+	}
 	for _, r := range h.list[h.cursor:] {
 		h.bytes -= r.size
+	}
+	if h.saved > h.cursor {
+		h.saved = -1
 	}
 	e.size += entryOverhead
 	h.list = append(h.list[:h.cursor], e)
@@ -61,6 +75,61 @@ func (h *history) push(e entry) {
 	h.list = append(h.list[:0], h.list[n:]...)
 	h.cursor -= n
 	h.dropped += n
+	h.saved -= n
+	if h.saved < 0 {
+		h.saved = -1
+	}
+}
+
+// BeginGroup collects the following pixel edits into one undo step, the way a
+// stroke is drawn from many segments but undone at once. Edits must stay on
+// one layer until EndGroup; SelectLayer ends the group.
+func (d *Document) BeginGroup() {
+	d.EndGroup()
+	d.hist.grouping = true
+}
+
+func (d *Document) EndGroup() {
+	h := &d.hist
+	if !h.grouping {
+		return
+	}
+	h.grouping = false
+	g := h.group
+	h.group = nil
+	if len(g) == 0 {
+		return
+	}
+	r := g[0].rect
+	for _, e := range g[1:] {
+		r = r.Union(e.rect)
+	}
+	p := d.layers[g[0].layer].Pix
+	after := copyRect(p, r)
+	// Rebuild the state before the group by laying each edit's "before" back
+	// over the current pixels, newest first.
+	scratch := image.NewNRGBA(r)
+	putRect(scratch, r, after)
+	for _, v := range slices.Backward(g) {
+		putRect(scratch, v.rect, v.before)
+	}
+	before := copyRect(scratch, r)
+	h.push(entry{
+		kind:   pixels,
+		layer:  g[0].layer,
+		rect:   r,
+		before: before,
+		after:  after,
+		size:   len(before) + len(after),
+	})
+}
+
+// Dirty reports whether the document differs from what was last saved.
+func (d *Document) Dirty() bool { return d.hist.cursor != d.hist.saved }
+
+func (d *Document) MarkSaved() {
+	d.EndGroup()
+	d.hist.saved = d.hist.cursor
 }
 
 // Dropped counts the oldest edits discarded to stay under the history budget;
@@ -71,6 +140,7 @@ func (d *Document) CanUndo() bool { return d.hist.cursor > 0 }
 func (d *Document) CanRedo() bool { return d.hist.cursor < len(d.hist.list) }
 
 func (d *Document) Undo() bool {
+	d.EndGroup()
 	if !d.CanUndo() {
 		return false
 	}
@@ -86,6 +156,7 @@ func (d *Document) Undo() bool {
 }
 
 func (d *Document) Redo() bool {
+	d.EndGroup()
 	if !d.CanRedo() {
 		return false
 	}

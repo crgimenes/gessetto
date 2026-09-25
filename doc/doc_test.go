@@ -147,3 +147,113 @@ func writeChunk(buf *bytes.Buffer, typ string, data []byte) {
 	binary.BigEndian.PutUint32(n[:], crc32.ChecksumIEEE(body))
 	buf.Write(n[:])
 }
+
+func TestGroupIsOneUndoStep(t *testing.T) {
+	d, err := New(4, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blue := color.NRGBA{B: 0xff, A: 0xff}
+	_ = d.SetPixel(0, 0, blue)
+	d.BeginGroup()
+	_ = d.SetPixel(1, 0, red)
+	_ = d.Line(1, 0, 3, 0, red)
+	_ = d.SetPixel(0, 0, red)
+	d.EndGroup()
+	want := []color.NRGBA{red, red, red, red}
+	assertRow(t, d, want)
+
+	if !d.Undo() {
+		t.Fatal("want the group undone")
+	}
+	assertRow(t, d, []color.NRGBA{blue, {}, {}, {}})
+	if !d.Redo() {
+		t.Fatal("want the group redone")
+	}
+	assertRow(t, d, want)
+	d.Undo()
+	d.Undo()
+	if d.Undo() {
+		t.Fatal("want exactly two steps: the blue pixel and the group")
+	}
+}
+
+func TestEmptyGroupLeavesNoStep(t *testing.T) {
+	d, err := New(2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.BeginGroup()
+	_ = d.SetPixel(9, 9, red)
+	d.EndGroup()
+	if d.CanUndo() {
+		t.Fatal("a group with nothing on the canvas must not become a step")
+	}
+}
+
+func TestDirtyFollowsSavedState(t *testing.T) {
+	d, err := New(2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Dirty() {
+		t.Fatal("new document must start clean")
+	}
+	_ = d.SetPixel(0, 0, red)
+	d.MarkSaved()
+	_ = d.SetPixel(1, 0, red)
+	if !d.Dirty() {
+		t.Fatal("edit after save must be dirty")
+	}
+	d.Undo()
+	if d.Dirty() {
+		t.Fatal("undo back to the saved state must be clean")
+	}
+	d.Undo()
+	_ = d.SetPixel(1, 0, red)
+	if !d.Dirty() {
+		t.Fatal("a branch away from the saved state must stay dirty")
+	}
+	d.Undo()
+	d.Redo()
+	if !d.Dirty() {
+		t.Fatal("the saved state is gone for good once its branch is discarded")
+	}
+}
+
+func TestFlattenIntoMatchesFlatten(t *testing.T) {
+	d, err := New(5, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = d.Line(0, 0, 4, 3, color.NRGBA{B: 0xff, A: 0x80})
+	_ = d.AddLayer("top")
+	_ = d.Line(4, 0, 0, 3, color.NRGBA{R: 0xff, A: 0x60})
+	full := d.Flatten()
+	part := image.NewNRGBA(d.Bounds())
+	d.FlattenInto(part, image.Rect(1, 1, 4, 3))
+	for y := range 4 {
+		for x := range 5 {
+			want := color.NRGBA{}
+			if (image.Point{x, y}).In(image.Rect(1, 1, 4, 3)) {
+				want = full.NRGBAAt(x, y)
+			}
+			if part.NRGBAAt(x, y) != want {
+				t.Fatalf("(%d,%d) = %v, want %v", x, y, part.NRGBAAt(x, y), want)
+			}
+			if d.PixelAt(x, y) != full.NRGBAAt(x, y) {
+				t.Fatalf("PixelAt(%d,%d) = %v, want %v", x, y, d.PixelAt(x, y), full.NRGBAAt(x, y))
+			}
+		}
+	}
+}
+
+func assertRow(t *testing.T, d *Document, want []color.NRGBA) {
+	t.Helper()
+	img := d.Flatten()
+	for x, w := range want {
+		if img.NRGBAAt(x, 0) != w {
+			t.Fatalf("(%d,0) = %v, want %v", x, img.NRGBAAt(x, 0), w)
+		}
+	}
+}
