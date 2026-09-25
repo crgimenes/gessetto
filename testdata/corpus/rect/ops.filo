@@ -1,0 +1,3 @@
+(doc-new 6 5)
+(doc-rect 4 3 0 0 "#ff0000")
+(doc-fill-rect 2 1 5 4 "#0000ff80")

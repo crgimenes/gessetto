@@ -11,6 +11,7 @@ import (
 
 	"github.com/crgimenes/gessetto/doc"
 	ui "github.com/crgimenes/minigui"
+	"github.com/crgimenes/native/alert"
 	"github.com/crgimenes/native/filedialog"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -42,7 +43,67 @@ var (
 	defaultNewPx = 64
 )
 
+// showAlert shows the system alert on the main thread. An error means there
+// is no native one here, and the caller falls back to its own dialog.
+func showAlert(opts alert.Options) (res alert.Result, err error) {
+	ebiten.RunOnMainThread(func() {
+		res, err = alert.Show(opts)
+	})
+	return res, err
+}
+
 func (a *app) openNewDialog() {
+	text := fmt.Sprintf("%d x %d", defaultNewPx, defaultNewPx)
+	message := "Width x height, in pixels."
+	for {
+		res, err := showAlert(alert.Options{
+			Title:   "New image",
+			Message: message,
+			Input:   true,
+			Text:    text,
+			Buttons: []alert.Button{{Title: "Create"}, {Title: "Cancel", Cancel: true}},
+		})
+		if err != nil {
+			a.openInAppNewDialog()
+			return
+		}
+		if res.Button != 0 {
+			return
+		}
+		text = res.Text
+		d, err := newFromSize(text)
+		if err == nil {
+			a.load(d, "")
+			a.status = ""
+			return
+		}
+		message = fmt.Sprintf("Write the size as width x height, like 64 x 48, from 1 to %d.", doc.MaxSide)
+	}
+}
+
+// newFromSize reads "64 x 48", "64x48", "64 48" or "64" (a square).
+func newFromSize(s string) (*doc.Document, error) {
+	f := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return r == 'x' || r == ' ' || r == ',' })
+	if len(f) == 1 {
+		f = append(f, f[0])
+	}
+	bad := fmt.Errorf("size %q: want width x height, 1 to %d each", s, doc.MaxSide)
+	if len(f) != 2 {
+		return nil, bad
+	}
+	w, errW := strconv.Atoi(f[0])
+	h, errH := strconv.Atoi(f[1])
+	if errW != nil || errH != nil {
+		return nil, bad
+	}
+	d, err := doc.New(w, h)
+	if err != nil {
+		return nil, bad
+	}
+	return d, nil
+}
+
+func (a *app) openInAppNewDialog() {
 	a.modal = modal{
 		kind:  modalNew,
 		w:     strconv.Itoa(defaultNewPx),
@@ -93,7 +154,7 @@ func (a *app) newDialog(escape bool) {
 	}
 	cancel := a.dlg.Button("cancel", "Cancel")
 	a.dlg.SameLine()
-	create := a.dlg.Button("create", "Create")
+	create := primaryButton(&a.dlg, "create", "Create")
 	create = create || a.dlg.Submitted("w") || a.dlg.Submitted("h")
 	switch {
 	case escape || cancel:
@@ -131,7 +192,7 @@ func (a *app) unsavedDialog(escape bool) {
 	a.dlg.SameLine()
 	cancel := a.dlg.Button("cancel", "Cancel")
 	a.dlg.SameLine()
-	save := a.dlg.Button("save", "Save")
+	save := primaryButton(&a.dlg, "save", "Save")
 	next := m.next
 	switch {
 	case escape || cancel:

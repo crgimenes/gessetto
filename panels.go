@@ -56,33 +56,66 @@ func (a *app) paletteRects() (colors image.Rectangle, swatches []image.Rectangle
 	return colors, swatches
 }
 
+var (
+	mutedText = color.RGBA{0x99, 0x99, 0x99, 0xff}
+	separator = color.RGBA{0x1a, 0x1a, 0x1a, 0xff}
+	accent    = color.RGBA{0x2d, 0x5a, 0x88, 0xff}
+	accentHot = color.RGBA{0x3a, 0x6f, 0xa6, 0xff}
+)
+
+func toolIcon(t tool) *ui.Icon {
+	switch t {
+	case toolEraser:
+		return iconEraser
+	case toolPicker:
+		return iconPicker
+	case toolFill:
+		return iconFill
+	case toolLine:
+		return iconLine
+	case toolRect:
+		return iconRect
+	case toolEllipse:
+		return iconEllipse
+	}
+	return iconPencil
+}
+
 func (a *app) updatePanels() {
 	in := a.in
 	pad := float64(a.px(barPad))
 
 	a.top.Begin(in, float64(a.lay.top.Min.X)+pad, float64(a.lay.top.Min.Y)+pad)
-	if a.top.Button("undo", "Undo") {
+	if a.top.IconToggle("layers", iconLayers, "", a.lay.mode != panelHidden) {
+		a.toggleLayers()
+	}
+	a.top.SameLine()
+	if a.top.IconButton("undo", iconUndo, "Undo") {
 		a.ed.undo()
 	}
 	a.top.SameLine()
-	if a.top.Button("redo", "Redo") {
+	if a.top.IconButton("redo", iconRedo, "Redo") {
 		a.ed.redo()
 	}
+	a.toolOptions()
 	a.top.SameLine()
 	a.top.Label("  " + toolHint(a.ed.tool))
 	a.top.End()
 
+	// Icons only, two to a row; the options bar names the tool in use.
 	a.left.Begin(in, float64(a.lay.left.Min.X)+pad, float64(a.lay.left.Min.Y)+pad)
-	a.left.SetItemWidth(float64(a.lay.left.Dx()) - 2*pad)
-	for _, t := range tools {
-		if a.left.Toggle(ui.ID(t.name), t.name+" ("+t.key+")", a.ed.tool == t.t) {
+	for i, t := range tools {
+		if i%2 == 1 {
+			a.left.SameLine()
+		}
+		if a.left.IconToggle(ui.ID(t.name), toolIcon(t.t), "", a.ed.tool == t.t) {
 			a.ed.release()
 			a.ed.tool = t.t
 		}
 	}
 	a.left.End()
 
-	if a.lay.showRight {
+	if a.lay.mode != panelHidden {
 		a.updateLayers(pad)
 	}
 
@@ -90,21 +123,87 @@ func (a *app) updatePanels() {
 	a.updatePaletteClicks()
 }
 
-func toolHint(t tool) string {
-	switch t {
-	case toolEraser:
-		return "Eraser: drag to clear pixels to transparent"
-	case toolPicker:
-		return "Picker: left click takes the foreground, right click the background"
+// sectionLabel titles a panel section the house way: capitals, muted.
+func sectionLabel(c *ui.Context, s string) {
+	st := c.Style()
+	muted := st
+	muted.Text = mutedText
+	c.SetStyle(muted)
+	c.Label(s)
+	c.SetStyle(st)
+}
+
+// primaryButton is the safe default of a dialog, drawn in the accent color
+// and placed rightmost by its caller.
+func primaryButton(c *ui.Context, id ui.ID, label string) bool {
+	st := c.Style()
+	p := st
+	p.Button, p.ButtonHot, p.Border = accent, accentHot, accentHot
+	c.SetStyle(p)
+	clicked := c.Button(id, label)
+	c.SetStyle(st)
+	return clicked
+}
+
+func (a *app) drawSeparators(screen *ebiten.Image) {
+	l := a.lay
+	fillRect(screen, image.Rect(l.top.Min.X, l.top.Max.Y-1, l.top.Max.X, l.top.Max.Y), separator)
+	fillRect(screen, image.Rect(l.bottom.Min.X, l.bottom.Min.Y, l.bottom.Max.X, l.bottom.Min.Y+1), separator)
+	fillRect(screen, image.Rect(l.left.Max.X-1, l.left.Min.Y, l.left.Max.X, l.left.Max.Y), separator)
+	if !l.right.Empty() {
+		fillRect(screen, image.Rect(l.right.Min.X, l.right.Min.Y, l.right.Min.X+1, l.right.Max.Y), separator)
 	}
-	return "Pencil: left draws the foreground color, right the background"
+}
+
+// toolOptions shows what the active tool can be set to, next to Undo/Redo.
+func (a *app) toolOptions() {
+	switch a.ed.tool {
+	case toolRect, toolEllipse:
+		a.top.SameLine()
+		if a.top.IconToggle("outline", toolIcon(a.ed.tool), "Outline", !a.ed.filled) {
+			a.ed.filled = false
+		}
+		a.top.SameLine()
+		if a.top.IconToggle("filled", iconFilled, "Filled", a.ed.filled) {
+			a.ed.filled = true
+		}
+	case toolFill:
+		a.top.SameLine()
+		a.top.Label(fmt.Sprintf("  Tolerance %3d", a.ed.tolerance))
+		a.top.SameLine()
+		v := float64(a.ed.tolerance)
+		if a.top.Slider("tolerance", &v, 0, 255) {
+			a.ed.tolerance = int(math.Round(v))
+		}
+	}
+}
+
+func toolHint(t tool) string {
+	for _, d := range tools {
+		if d.t != t {
+			continue
+		}
+		hint := d.name + " (" + d.key + ")"
+		switch t {
+		case toolEraser:
+			return hint + ": clears pixels to transparent"
+		case toolPicker:
+			return hint + ": left takes the foreground, right the background"
+		case toolFill:
+			return hint + ": fills the area of one color on the active layer"
+		case toolLine, toolRect, toolEllipse:
+			return hint + ": drag; Shift keeps it straight or square"
+		}
+		return hint + ": left draws the foreground, right the background"
+	}
+	return ""
 }
 
 func (a *app) updateLayers(pad float64) {
 	d := a.ed.d
 	layers := d.Layers()
 	a.right.Begin(a.in, float64(a.lay.right.Min.X)+pad, float64(a.lay.right.Min.Y)+pad)
-	a.right.Label("Layers")
+	sectionLabel(&a.right, "LAYERS")
 	names := make([]string, len(layers))
 	for i, l := range layers {
 		names[len(layers)-1-i] = l.Name
@@ -116,8 +215,13 @@ func (a *app) updateLayers(pad float64) {
 		if err != nil {
 			a.status = err.Error()
 		}
+		// Over the canvas the panel hides what was just chosen for.
+		if a.lay.mode == panelOverlay {
+			a.layersOpen = false
+			a.relayout(a.screen)
+		}
 	}
-	if a.right.Button("addlayer", "New Layer") {
+	if a.right.IconButton("addlayer", iconAdd, "New Layer") {
 		a.addLayer()
 	}
 	a.right.End()
@@ -126,35 +230,34 @@ func (a *app) updateLayers(pad float64) {
 func (a *app) updateStatus(pad float64) {
 	b := a.lay.bottom
 	y := float64(b.Min.Y) + pad + float64(a.px(swatchPx)) + pad
+	// Buttons first: text whose width changes (zoom, cursor position, status)
+	// goes after them, or every digit that changes would move the buttons.
 	a.bottom.Begin(a.in, float64(b.Min.X)+pad, y)
-	size := a.ed.d.Bounds().Size()
-	info := fmt.Sprintf("%d x %d", size.X, size.Y)
-	if a.overCanvas {
-		info += fmt.Sprintf("   %d, %d", a.hover.X, a.hover.Y)
-	}
-	a.bottom.Label(info)
-	a.bottom.SameLine()
-	if a.bottom.Button("zoomout", "-") {
+	if a.bottom.IconButton("zoomout", iconZoomOut, "") {
 		a.zoomBy(-1)
 	}
 	a.bottom.SameLine()
-	a.bottom.Label(zoomLabel(a.v.zoom()))
-	a.bottom.SameLine()
-	if a.bottom.Button("zoomin", "+") {
+	if a.bottom.IconButton("zoomin", iconZoomIn, "") {
 		a.zoomBy(1)
 	}
 	a.bottom.SameLine()
-	if a.bottom.Button("fit", "Fit") {
+	if a.bottom.IconButton("fit", iconFit, "Fit") {
 		a.fitView()
 	}
 	a.bottom.SameLine()
-	if a.bottom.Toggle("grid", "Grid", a.grid) {
+	if a.bottom.IconToggle("grid", iconGrid, "Grid", a.grid) {
 		a.grid = !a.grid
 	}
-	if a.status != "" {
-		a.bottom.SameLine()
-		a.bottom.Label("  " + a.status)
+	size := a.ed.d.Bounds().Size()
+	info := fmt.Sprintf("  %s   %d x %d", zoomLabel(a.v.zoom()/a.scale), size.X, size.Y)
+	if a.overCanvas {
+		info += fmt.Sprintf("   %d, %d", a.hover.X, a.hover.Y)
 	}
+	if a.status != "" {
+		info += "   " + a.status
+	}
+	a.bottom.SameLine()
+	a.bottom.Label(info)
 	a.bottom.End()
 }
 
@@ -162,7 +265,7 @@ func zoomLabel(z float64) string {
 	if z >= 1 {
 		return fmt.Sprintf("%gx", z)
 	}
-	return fmt.Sprintf("1/%gx", 1/z)
+	return fmt.Sprintf("1/%gx", math.Round(1/z*100)/100)
 }
 
 func (a *app) updatePaletteClicks() {
@@ -217,11 +320,13 @@ func strokeRect(dst *ebiten.Image, r image.Rectangle, c color.Color) {
 
 func (a *app) updateCanvas() {
 	p := image.Pt(int(a.in.MouseX), int(a.in.MouseY))
-	a.overCanvas = p.In(a.lay.canvas)
+	a.overCanvas = p.In(a.lay.canvas) && !p.In(a.lay.right)
 	a.hover = a.v.toDoc(p)
 	middle := ebiten.IsMouseButtonPressed(ebiten.MouseButtonMiddle)
 	right := ebiten.IsMouseButtonPressed(ebiten.MouseButtonRight)
 	space := ebiten.IsKeyPressed(ebiten.KeySpace)
+	a.ed.constrain = ebiten.IsKeyPressed(ebiten.KeyShift)
+	defer a.updateCursor(space)
 
 	switch {
 	case a.panning:
@@ -254,6 +359,22 @@ func (a *app) updateCanvas() {
 	}
 	if a.overCanvas {
 		a.wheel(p)
+	}
+}
+
+// updateCursor uses the system's own shapes: a cursor the app drew itself
+// would trail the pointer by a frame, which is what makes drawing feel slow.
+func (a *app) updateCursor(space bool) {
+	shape := ebiten.CursorShapeDefault
+	switch {
+	case a.panning || a.overCanvas && space:
+		shape = ebiten.CursorShapeMove
+	case a.overCanvas || a.ed.stroking:
+		shape = ebiten.CursorShapeCrosshair
+	}
+	if shape != a.cursor {
+		a.cursor = shape
+		ebiten.SetCursorShape(shape)
 	}
 }
 

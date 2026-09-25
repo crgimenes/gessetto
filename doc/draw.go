@@ -1,6 +1,7 @@
 package doc
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"image"
@@ -76,6 +77,11 @@ func (d *Document) edit(r image.Rectangle, draw func(p *image.NRGBA)) {
 	before := copyRect(p, r)
 	draw(p)
 	after := copyRect(p, r)
+	// An edit that changed nothing, like filling a region with its own
+	// color, is no step to undo.
+	if bytes.Equal(before, after) {
+		return
+	}
 	d.hist.push(entry{
 		kind:   pixels,
 		layer:  d.active,

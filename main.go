@@ -30,6 +30,7 @@ type options struct {
 	apply       string
 	out         string
 	input       string
+	shot        string
 }
 
 func main() {
@@ -57,6 +58,7 @@ script creates with (doc-new w h), and writes the flattened result as PNG.
 
   -apply file    Filo script to run headless; "-" reads standard input
   -out file      PNG to write with -apply; "-" writes standard output
+  -shot file     open the window, save its first frames as PNG and quit
   -debug         write events to standard error as key=value lines
   -version       print the version and exit
   -h, --help     print this help and exit
@@ -74,6 +76,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (opts options, code int,
 	fs.BoolVar(&opts.debug, "debug", false, "")
 	fs.StringVar(&opts.apply, "apply", "", "")
 	fs.StringVar(&opts.out, "out", "", "")
+	fs.StringVar(&opts.shot, "shot", "", "")
 
 	err := fs.Parse(args)
 	if errors.Is(err, flag.ErrHelp) {
@@ -129,8 +132,12 @@ func runWindow(opts options, stderr io.Writer) int {
 		return 1
 	}
 	a := newApp(d, opts.input, opts.debug, stderr)
+	a.shotPath = opts.shot
 	a.event("start", "version="+Version)
 	err = ebiten.RunGame(a)
+	if err == nil {
+		err = a.shotErr
+	}
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "gessetto:", err)
 		return 1

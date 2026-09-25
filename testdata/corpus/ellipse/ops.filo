@@ -1,0 +1,4 @@
+(doc-new 9 7)
+(doc-ellipse 0 0 8 6 "#00aa00")
+(doc-fill-ellipse 2 2 6 4 "#ff0000")
+(doc-ellipse 0 0 1 4 "#0000ff")

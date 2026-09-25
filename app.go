@@ -10,6 +10,7 @@ import (
 
 	"github.com/crgimenes/gessetto/doc"
 	ui "github.com/crgimenes/minigui"
+	"github.com/crgimenes/native/alert"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 )
@@ -45,15 +46,28 @@ type app struct {
 	panOrigin  image.Point
 	wheelZoom  float64
 	hover      image.Point
+	cursor     ebiten.CursorShapeType
 	overCanvas bool
 
 	modal  modal
 	status string
 	quit   bool
+
+	// Hidden by choice and opened for lack of room are separate: widening the
+	// window brings back a panel the user never hid, and keeps away one they did.
+	layersHidden bool
+	layersOpen   bool
+
+	perf perf
+
+	shotPath   string
+	shotFrames int
+	shotErr    error
 }
 
 func newApp(d *doc.Document, path string, debug bool, log io.Writer) *app {
 	a := &app{debug: debug, log: log, ed: newEditor(d), path: path, grid: true, scale: 1}
+	a.perf = perf{enabled: debug, log: log}
 	a.setScale(ebiten.Monitor().DeviceScaleFactor())
 	return a
 }
@@ -84,18 +98,28 @@ func (a *app) setScale(s float64) {
 	st.Pad *= s
 	st.Gap *= s
 	st.FieldW *= s
-	for _, c := range []*ui.Context{&a.top, &a.left, &a.right, &a.bottom, &a.dlg} {
+	for _, c := range []*ui.Context{&a.top, &a.left, &a.bottom, &a.dlg} {
 		c.SetStyle(st)
 	}
+	st.FieldW = (rightW - 2*barPad) * s
+	a.right.SetStyle(st)
 }
 
 func (a *app) Update() error {
+	t0 := a.perf.now()
+	defer func() {
+		a.perf.add(&a.perf.upd, t0)
+		a.perf.tick()
+	}()
 	a.syncMenu()
 	a.menu.drain()
 	if ebiten.IsWindowBeingClosed() {
 		a.requestQuit()
 	}
 	if a.quit {
+		return a.exit()
+	}
+	if a.shotPath != "" && a.shotFrames >= shotAfter {
 		return a.exit()
 	}
 
@@ -158,7 +182,27 @@ func (a *app) guard(next func()) {
 		next()
 		return
 	}
-	a.modal = modal{kind: modalUnsaved, next: next}
+	choice, err := showAlert(alert.Options{
+		Title:   "Save changes to " + a.docName() + "?",
+		Message: "Unsaved changes are lost if you don't save.",
+		Buttons: []alert.Button{
+			{Title: "Save"},
+			{Title: "Cancel", Cancel: true},
+			{Title: "Don't Save", Destructive: true},
+		},
+	})
+	if err != nil {
+		a.modal = modal{kind: modalUnsaved, next: next}
+		return
+	}
+	switch choice.Button {
+	case 0:
+		if a.save(false) {
+			next()
+		}
+	case 2:
+		next()
+	}
 }
 
 func (a *app) docName() string {
@@ -232,34 +276,73 @@ func (a *app) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight
 		a.setScale(s)
 	}
 	w, h := int(float64(outsideWidth)*a.scale), int(float64(outsideHeight)*a.scale)
-	if (image.Point{w, h}) != a.screen {
-		a.screen = image.Pt(w, h)
-		a.lay = layoutFor(w, h, a.scale)
-		a.cv.resizeChecker(a.lay.canvas.Size(), a.scale)
-		if !a.fitted {
-			a.fitView()
-			a.fitted = true
-		}
-	}
+	a.relayout(image.Pt(w, h))
 	return w, h
 }
 
+func (a *app) panelMode(w int) panelMode {
+	if narrow(w, a.scale) {
+		if a.layersOpen {
+			return panelOverlay
+		}
+		return panelHidden
+	}
+	if a.layersHidden {
+		return panelHidden
+	}
+	return panelDocked
+}
+
+func (a *app) relayout(screen image.Point) {
+	mode := a.panelMode(screen.X)
+	if screen == a.screen && mode == a.lay.mode {
+		return
+	}
+	a.screen = screen
+	a.lay = layoutFor(screen.X, screen.Y, a.scale, mode)
+	a.cv.resizeChecker(a.lay.canvas.Size(), a.scale)
+	if !a.fitted {
+		a.fitView()
+		a.fitted = true
+	}
+}
+
+func (a *app) toggleLayers() {
+	if narrow(a.screen.X, a.scale) {
+		a.layersOpen = !a.layersOpen
+	} else {
+		a.layersHidden = !a.layersHidden
+	}
+	a.relayout(a.screen)
+}
+
 func (a *app) Draw(screen *ebiten.Image) {
+	t0 := a.perf.now()
+	defer a.perf.add(&a.perf.draw, t0)
 	a.cv.sync(a.ed)
+	a.perf.add(&a.perf.sync, t0)
 	a.cv.draw(screen, a.lay.canvas, &a.v, a.grid)
+	if a.overCanvas && a.hover.In(a.ed.d.Bounds()) && a.v.zoom() >= footprintFrom*a.scale {
+		a.drawFootprint(screen)
+	}
 	for _, r := range []image.Rectangle{a.lay.top, a.lay.left, a.lay.right, a.lay.bottom} {
 		if !r.Empty() {
 			screen.SubImage(r).(*ebiten.Image).Fill(panelBack)
 		}
 	}
+	a.drawSeparators(screen)
 	a.drawPalette(screen)
 	a.top.Render(screen)
 	a.left.Render(screen)
-	a.right.Render(screen)
+	// A hidden panel skips its frame, so its last commands must not be drawn.
+	if a.lay.mode != panelHidden {
+		a.right.Render(screen)
+	}
 	a.bottom.Render(screen)
 	if a.modal.kind != modalNone {
 		a.drawModal(screen)
 	}
+	a.takeShot(screen)
 }
 
 func (a *app) event(name, fields string) {

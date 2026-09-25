@@ -85,3 +85,64 @@ func TestStrokeFarOffCanvasIsClamped(t *testing.T) {
 		t.Fatal("the part of the stroke on the canvas must be drawn")
 	}
 }
+
+func TestShapePreviewLeavesNoTrail(t *testing.T) {
+	e := newTestEditor(t, 6, 6)
+	e.tool = toolRect
+	e.press(image.Pt(0, 0), false)
+	e.drag(image.Pt(5, 5))
+	e.drag(image.Pt(2, 2))
+	e.release()
+	if e.d.PixelAt(5, 5) != (color.NRGBA{}) {
+		t.Fatal("the larger preview must be gone once the pointer moved back")
+	}
+	if e.d.PixelAt(2, 2) != e.fg || e.d.PixelAt(1, 1) != (color.NRGBA{}) {
+		t.Fatal("want the outline of (0,0)-(2,2) only")
+	}
+	r, _ := e.takeChanged()
+	if !image.Rect(0, 0, 6, 6).In(r) {
+		t.Fatalf("changed %v must cover where the big preview was", r)
+	}
+	e.undo()
+	if e.d.PixelAt(0, 0) != (color.NRGBA{}) || e.d.CanUndo() {
+		t.Fatal("a shape must be one undo step")
+	}
+}
+
+func TestConstrain(t *testing.T) {
+	a := image.Pt(10, 10)
+	tests := []struct {
+		t       tool
+		p, want image.Point
+	}{
+		{toolLine, image.Pt(20, 12), image.Pt(20, 10)},
+		{toolLine, image.Pt(11, 3), image.Pt(10, 3)},
+		{toolLine, image.Pt(16, 4), image.Pt(16, 4)},
+		{toolRect, image.Pt(13, 20), image.Pt(20, 20)},
+		{toolEllipse, image.Pt(4, 12), image.Pt(4, 16)},
+		{toolRect, image.Pt(10, 15), image.Pt(15, 15)},
+	}
+	for _, tt := range tests {
+		got := constrained(tt.t, a, tt.p)
+		if got != tt.want {
+			t.Errorf("constrained(%v, %v) = %v, want %v", tt.t, tt.p, got, tt.want)
+		}
+	}
+}
+
+func TestFillToolUsesToleranceAndSecondary(t *testing.T) {
+	e := newTestEditor(t, 3, 1)
+	_ = e.d.SetPixel(2, 0, color.NRGBA{A: 8})
+	e.tool = toolFill
+	e.tolerance = 8
+	e.press(image.Pt(0, 0), true)
+	e.release()
+	for x := range 3 {
+		if e.d.PixelAt(x, 0) != e.bg {
+			t.Fatalf("(%d,0) = %v, want the background color", x, e.d.PixelAt(x, 0))
+		}
+	}
+	if e.stroking {
+		t.Fatal("a fill is one click, not a stroke")
+	}
+}

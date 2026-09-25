@@ -1,0 +1,2 @@
+(doc-new 2 2)
+(doc-fill 0 0 "#ffffff" 300)

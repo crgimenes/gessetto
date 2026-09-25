@@ -53,6 +53,11 @@ func (s *state) register(eng *filo.Engine) {
 	eng.MustRegisterBuiltin("doc-new", s.docNew)
 	eng.MustRegisterBuiltin("doc-pixel", s.withDoc(s.pixel))
 	eng.MustRegisterBuiltin("doc-line", s.withDoc(s.line))
+	eng.MustRegisterBuiltin("doc-rect", s.withDoc(s.box(s.rectDraw(false))))
+	eng.MustRegisterBuiltin("doc-fill-rect", s.withDoc(s.box(s.rectDraw(true))))
+	eng.MustRegisterBuiltin("doc-ellipse", s.withDoc(s.box(s.ellipseDraw(false))))
+	eng.MustRegisterBuiltin("doc-fill-ellipse", s.withDoc(s.box(s.ellipseDraw(true))))
+	eng.MustRegisterBuiltin("doc-fill", s.withDoc(s.fill))
 	eng.MustRegisterBuiltin("doc-add-layer", s.withDoc(s.addLayer))
 	eng.MustRegisterBuiltin("doc-select-layer", s.withDoc(s.selectLayer))
 	eng.MustRegisterBuiltin("doc-undo", s.withDoc(s.undo))
@@ -114,6 +119,55 @@ func (s *state) line(args []filo.Value) (filo.Value, error) {
 		return filo.Value{}, err
 	}
 	return empty, s.d.Line(ints[0], ints[1], ints[2], ints[3], c)
+}
+
+type boxDraw func(x0, y0, x1, y1 int, c color.NRGBA) error
+
+// The document may not exist yet when builtins are registered, so each call
+// looks it up through s.
+func (s *state) rectDraw(filled bool) boxDraw {
+	return func(x0, y0, x1, y1 int, c color.NRGBA) error { return s.d.Rect(x0, y0, x1, y1, c, filled) }
+}
+
+func (s *state) ellipseDraw(filled bool) boxDraw {
+	return func(x0, y0, x1, y1 int, c color.NRGBA) error { return s.d.Ellipse(x0, y0, x1, y1, c, filled) }
+}
+
+// box reads (x0 y0 x1 y1 color): two opposite corners, both included.
+func (s *state) box(draw boxDraw) func(args []filo.Value) (filo.Value, error) {
+	return func(args []filo.Value) (filo.Value, error) {
+		if len(args) != 5 {
+			return filo.Value{}, fmt.Errorf("want (x0 y0 x1 y1 color), got %d arguments", len(args))
+		}
+		ints, err := intArgs(args[:4], "x0", "y0", "x1", "y1")
+		if err != nil {
+			return filo.Value{}, err
+		}
+		c, err := colorArg(args[4])
+		if err != nil {
+			return filo.Value{}, err
+		}
+		return empty, draw(ints[0], ints[1], ints[2], ints[3], c)
+	}
+}
+
+func (s *state) fill(args []filo.Value) (filo.Value, error) {
+	if len(args) != 4 {
+		return filo.Value{}, fmt.Errorf("want (x y color tolerance), got %d arguments", len(args))
+	}
+	ints, err := intArgs([]filo.Value{args[0], args[1], args[3]}, "x", "y", "tolerance")
+	if err != nil {
+		return filo.Value{}, err
+	}
+	if ints[2] < 0 || ints[2] > 255 {
+		return filo.Value{}, fmt.Errorf("tolerance: want 0 to 255, got %d", ints[2])
+	}
+	c, err := colorArg(args[2])
+	if err != nil {
+		return filo.Value{}, err
+	}
+	s.d.Fill(ints[0], ints[1], c, ints[2])
+	return empty, nil
 }
 
 func (s *state) addLayer(args []filo.Value) (filo.Value, error) {

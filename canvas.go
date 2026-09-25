@@ -125,6 +125,20 @@ func (c *canvasView) draw(screen *ebiten.Image, area image.Rectangle, v *view, g
 		float32(shown.Dx())+1, float32(shown.Dy())+1, 1, edgeColor, false)
 }
 
+// footprintFrom is the zoom, in logical pixels per image pixel, from which
+// the pixel under the pointer gets an outline; below it the outline would
+// hide the pixel.
+const footprintFrom = 4
+
+// drawFootprint outlines the pixel the next click paints, in black and white
+// so it shows on any color.
+func (a *app) drawFootprint(screen *ebiten.Image) {
+	r := a.v.toScreen(image.Rectangle{Min: a.hover, Max: a.hover.Add(image.Pt(1, 1))})
+	dst := screen.SubImage(a.lay.canvas).(*ebiten.Image)
+	strokeRect(dst, r, color.Black)
+	strokeRect(dst, r.Inset(1), color.White)
+}
+
 // drawGrid draws one line per image pixel boundary inside vis only, so the
 // cost follows the visible area rather than the image size.
 func drawGrid(dst *ebiten.Image, vis image.Rectangle, v *view) {

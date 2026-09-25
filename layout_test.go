@@ -7,21 +7,19 @@ import (
 
 func TestLayoutTilesTheScreen(t *testing.T) {
 	for _, tt := range []struct {
-		w, h      int
-		scale     float64
-		showRight bool
+		w, h  int
+		scale float64
+		mode  panelMode
 	}{
-		{1280, 800, 1, true},
-		{2560, 1600, 2, true},
-		{390, 700, 1, false},
-		{780, 1400, 2, false},
+		{1280, 800, 1, panelDocked},
+		{2560, 1600, 2, panelDocked},
+		{1280, 800, 1, panelHidden},
+		{390, 700, 1, panelHidden},
+		{780, 1400, 2, panelHidden},
 	} {
-		l := layoutFor(tt.w, tt.h, tt.scale)
-		if l.showRight != tt.showRight {
-			t.Errorf("%dx%d@%v: showRight %v, want %v", tt.w, tt.h, tt.scale, l.showRight, tt.showRight)
-		}
+		l := layoutFor(tt.w, tt.h, tt.scale, tt.mode)
 		parts := []image.Rectangle{l.top, l.bottom, l.left, l.canvas}
-		if l.showRight {
+		if tt.mode == panelDocked {
 			parts = append(parts, l.right)
 		}
 		area := 0
@@ -39,5 +37,21 @@ func TestLayoutTilesTheScreen(t *testing.T) {
 		if l.canvas.Empty() {
 			t.Errorf("%dx%d@%v: no room left for the canvas", tt.w, tt.h, tt.scale)
 		}
+	}
+}
+
+func TestOverlayKeepsTheCanvas(t *testing.T) {
+	l := layoutFor(390, 700, 1, panelOverlay)
+	if l.right.Empty() || !l.right.Overlaps(l.canvas) {
+		t.Fatalf("overlay panel %v must lie over the canvas %v", l.right, l.canvas)
+	}
+	if l.canvas != layoutFor(390, 700, 1, panelHidden).canvas {
+		t.Fatal("an overlay must not shrink the canvas")
+	}
+}
+
+func TestNarrowThreshold(t *testing.T) {
+	if !narrow(719, 1) || narrow(720, 1) || !narrow(1439, 2) || narrow(1440, 2) {
+		t.Fatal("narrow must switch at 720 logical pixels")
 	}
 }

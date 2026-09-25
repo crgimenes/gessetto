@@ -124,6 +124,18 @@ func (d *Document) EndGroup() {
 	})
 }
 
+// RevertGroup undoes the edits made since BeginGroup and keeps grouping: a
+// shape tool redraws its preview this way on every pointer move, so the
+// preview is the real drawing and releasing the pointer only commits it.
+func (d *Document) RevertGroup() {
+	h := &d.hist
+	for _, e := range slices.Backward(h.group) {
+
+		putRect(d.layers[e.layer].Pix, e.rect, e.before)
+	}
+	h.group = h.group[:0]
+}
+
 // Dirty reports whether the document differs from what was last saved.
 func (d *Document) Dirty() bool { return d.hist.cursor != d.hist.saved }
 

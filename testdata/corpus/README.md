@@ -22,6 +22,9 @@ A case holds:
 | `(doc-new w h)` | new document, one transparent layer "Background"; fails if one is open |
 | `(doc-pixel x y color)` | replace one pixel of the active layer |
 | `(doc-line x0 y0 x1 y1 color)` | Bresenham line, endpoints included, replacing pixels |
+| `(doc-rect x0 y0 x1 y1 color)` / `(doc-fill-rect ...)` | outline / area of the rectangle with those opposite corners, both included |
+| `(doc-ellipse x0 y0 x1 y1 color)` / `(doc-fill-ellipse ...)` | outline / area of the ellipse inscribed in that rectangle |
+| `(doc-fill x y color tolerance)` | 4-connected bucket fill of the active layer, tolerance 0 to 255 |
 | `(doc-add-layer name)` | transparent layer above the active one, which it becomes |
 | `(doc-select-layer i)` | make layer `i` (0 is the bottom) active |
 | `(doc-undo)` / `(doc-redo)` | `#t` if something was undone/redone, `#f` if not |
@@ -42,6 +45,25 @@ Line, as in `doc/draw.go`:
           e2 = 2e
           if e2 >= dy: e += dy, x += sx
           if e2 <= dx: e += dx, y += sy
+
+Ellipse in the box (x0, y0)-(x1, y1), x0 <= x1 and y0 <= y1, after Alois
+Zingl's plotEllipseRect, in 64-bit integers. `span(xa, xb, y)` plots xa and xb
+for an outline, every x from xa to xb for a filled ellipse:
+
+    a = x1-x0, b = y1-y0, b1 = b & 1
+    dx = 4(1-a)b², dy = 4(b1+1)a², err = dx+dy+b1·a²
+    yb = y0 + (b+1)/2, yt = yb - b1
+    while x0 <= x1:
+        span(x0, x1, yb); span(x0, x1, yt)
+        e2 = 2err
+        if e2 <= dy: yb++, yt--, dy += 8a², err += dy
+        if e2 >= dx or 2err > dy: x0++, x1--, dx += 8b², err += dx
+    while yb-yt <= b:
+        span(x0-1, x1+1, yb); span(x0-1, x1+1, yt); yb++, yt--
+
+Fill takes the color at (x, y) on the active layer and spreads to the four
+neighbors whose R, G, B and A each differ from it by at most the tolerance.
+An edit that changes no pixel is not an undo step.
 
 Flatten, bottom layer first, over a transparent canvas, in integers:
 
