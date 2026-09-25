@@ -1,0 +1,4 @@
+(doc-new 1 1)
+(doc-pixel 0 0 "#0000ff80")
+(doc-add-layer "ink")
+(doc-pixel 0 0 "#ff000040")

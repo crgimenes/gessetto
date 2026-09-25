@@ -1,0 +1,2 @@
+(doc-new 2 2)
+(doc-pixel 0.5 0 "#ffffff")

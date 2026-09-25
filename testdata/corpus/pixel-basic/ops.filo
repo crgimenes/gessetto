@@ -1,0 +1,3 @@
+(doc-new 4 3)
+(doc-pixel 1 2 "#ff0000")
+(doc-pixel 3 0 "#00ff0080")

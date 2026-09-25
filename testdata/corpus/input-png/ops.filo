@@ -1,0 +1,4 @@
+(doc-add-layer "over")
+(doc-pixel 0 0 "#ffffff80")
+(doc-select-layer 0)
+(doc-pixel 1 0 "#00000080")

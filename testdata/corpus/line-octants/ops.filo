@@ -1,0 +1,5 @@
+(doc-new 9 9)
+(doc-line 4 4 8 4 "#ff0000")
+(doc-line 4 4 8 6 "#00ff00")
+(doc-line 4 4 4 0 "#0000ff")
+(doc-line 4 4 1 8 "#ffffff")

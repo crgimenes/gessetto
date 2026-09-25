@@ -1,0 +1,7 @@
+(doc-new 1 1)
+(doc-pixel 0 0 "#00ff00")
+(doc-add-layer "top")
+(doc-pixel 0 0 "#ff0000")
+(doc-undo)
+(doc-undo)
+(doc-pixel 0 0 "#0000ff")

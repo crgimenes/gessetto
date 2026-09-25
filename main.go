@@ -2,11 +2,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/hajimehoshi/ebiten/v2"
 )
@@ -23,6 +26,9 @@ const (
 type options struct {
 	showVersion bool
 	debug       bool
+	apply       string
+	out         string
+	input       string
 }
 
 func main() {
@@ -30,19 +36,30 @@ func main() {
 	if done {
 		os.Exit(code)
 	}
+	if opts.apply != "" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		code = runApply(ctx, opts, os.Stdin, os.Stdout, os.Stderr)
+		stop()
+		os.Exit(code)
+	}
 	os.Exit(runWindow(opts, os.Stderr))
 }
 
 func usage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `usage: gessetto [flags]
+       gessetto -apply ops.filo -out out.png [in.png]
 
-Opinionated drawing and pixel-art editor.
+Opinionated drawing and pixel-art editor. With -apply it opens no window:
+it runs a Filo script of doc-* operations on in.png, or on the document the
+script creates with (doc-new w h), and writes the flattened result as PNG.
 
+  -apply file    Filo script to run headless; "-" reads standard input
+  -out file      PNG to write with -apply; "-" writes standard output
   -debug         write events to standard error as key=value lines
   -version       print the version and exit
   -h, --help     print this help and exit
 
-  gessetto -debug
+  echo '(doc-new 8 8) (doc-line 0 0 7 7 "#ff0000")' | gessetto -apply - -out x.png
 `)
 }
 
@@ -53,6 +70,8 @@ func parseArgs(args []string, stdout, stderr io.Writer) (opts options, code int,
 	fs.SetOutput(io.Discard)
 	fs.BoolVar(&opts.showVersion, "version", false, "")
 	fs.BoolVar(&opts.debug, "debug", false, "")
+	fs.StringVar(&opts.apply, "apply", "", "")
+	fs.StringVar(&opts.out, "out", "", "")
 
 	err := fs.Parse(args)
 	if errors.Is(err, flag.ErrHelp) {
@@ -64,15 +83,29 @@ func parseArgs(args []string, stdout, stderr io.Writer) (opts options, code int,
 		usage(stderr)
 		return opts, 2, true
 	}
-	if fs.NArg() > 0 {
-		_, _ = fmt.Fprintf(stderr, "gessetto: unexpected argument %q\n", fs.Arg(0))
-		usage(stderr)
-		return opts, 2, true
-	}
 	if opts.showVersion {
 		_, _ = fmt.Fprintln(stdout, Version)
 		return opts, 0, true
 	}
+	problem := ""
+	maxArgs := 0
+	if opts.apply != "" {
+		maxArgs = 1
+	}
+	switch {
+	case fs.NArg() > maxArgs:
+		problem = fmt.Sprintf("unexpected argument %q", fs.Arg(maxArgs))
+	case opts.apply != "" && opts.out == "":
+		problem = "-apply needs -out"
+	case opts.apply == "" && opts.out != "":
+		problem = "-out is only used with -apply"
+	}
+	if problem != "" {
+		_, _ = fmt.Fprintln(stderr, "gessetto:", problem)
+		usage(stderr)
+		return opts, 2, true
+	}
+	opts.input = fs.Arg(0)
 	return opts, 0, false
 }
 

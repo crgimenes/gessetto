@@ -1,0 +1,8 @@
+(doc-new 3 1)
+(doc-pixel 0 0 "#ff0000")
+(doc-pixel 1 0 "#00ff00")
+(doc-undo)
+(doc-redo)
+(doc-undo)
+(doc-pixel 2 0 "#0000ff")
+(if (doc-redo) (error "redo must be gone after a new edit"))
