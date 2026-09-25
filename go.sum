@@ -2,10 +2,10 @@ github.com/crgimenes/filo v0.0.25 h1:DfiHElBCh70qenSP29fdBaXjxkyfSiY0X0Imok2V9LY
 github.com/crgimenes/filo v0.0.25/go.mod h1:KmVbVAr7nleiZprZLWHXoaVW+I+NuftpUDdUmBbaIHs=
 github.com/crgimenes/glaze v0.0.54 h1:7Sc1v3ouhOudPH3fzFcNbOjmGRmH/UoKZdObjRavFJc=
 github.com/crgimenes/glaze v0.0.54/go.mod h1:cppy7Il8j9Gf7Y223OMkMqk9cRZ97QNN2QijBhRmjA0=
-github.com/crgimenes/minigui v0.1.11 h1:0lfqg9Si9SBOQTKLJHnX8C9r2eJIIMYVmNuafeWLFhE=
-github.com/crgimenes/minigui v0.1.11/go.mod h1:oa9E19YULa2nsixuVXIoACLdxqdIlHhVVYMCpf1Afp8=
-github.com/crgimenes/native v0.1.11 h1:r9uI4WQefS4Ju7wRKh6G1EdUf3i7Gt/mkKiNIYMoieU=
-github.com/crgimenes/native v0.1.11/go.mod h1:I78xmt8yoTyb9ThB/6U+/lgl7SELVkQSuB9TvWWMhXw=
+github.com/crgimenes/minigui v0.1.12 h1:rLmPCga1vefFDi8jpM3x9TO1xezgjalwPHtpoZBZkEU=
+github.com/crgimenes/minigui v0.1.12/go.mod h1:oa9E19YULa2nsixuVXIoACLdxqdIlHhVVYMCpf1Afp8=
+github.com/crgimenes/native v0.1.12 h1:0PV7PigVV9M/K3UVVCkw4K4vrT5wKSekBJpvHzbLyfk=
+github.com/crgimenes/native v0.1.12/go.mod h1:Z+AGFxyW5htcS1+VnF/tAokG+o4JcPOlkcfbyAd1hes=
 github.com/ebitengine/gomobile v0.0.0-20260820040257-d11f821a26a6 h1:Tnc3YtzxhgsvNdNrER9wWkGJbyjOwyUuzjUY5rZK72k=
 github.com/ebitengine/gomobile v0.0.0-20260820040257-d11f821a26a6/go.mod h1:gwnFEwdzWZpNehgwkeK4756Ez58f58bXz6bgEAq+xqk=
 github.com/ebitengine/hideconsole v1.0.0 h1:5J4U0kXF+pv/DhiXt5/lTz0eO5ogJ1iXb8Yj1yReDqE=
