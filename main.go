@@ -81,13 +81,17 @@ func runWindow(opts options, stderr io.Writer) int {
 	ebiten.SetWindowSizeLimits(minW, minH, -1, -1)
 	ebiten.SetWindowTitle("gessetto")
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
+	err := setWindowIcon()
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "gessetto: window icon:", err)
+	}
 	// Closing the window and Cmd+Q never pass through a menu; without this and
 	// the check at the top of Update, unsaved work dies with the process.
 	ebiten.SetWindowClosingHandled(true)
 
 	a := &app{debug: opts.debug, log: stderr}
 	a.event("start", "version="+Version)
-	err := ebiten.RunGame(a)
+	err = ebiten.RunGame(a)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "gessetto:", err)
 		return 1
