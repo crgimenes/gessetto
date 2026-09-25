@@ -1,56 +1,30 @@
 package doc
 
-import (
-	"image"
-	"image/color"
-)
+import "image/color"
 
-// Rect draws the outline, or with filled the whole area, of the rectangle
-// whose opposite corners are (x0, y0) and (x1, y1), both included.
-func (d *Document) Rect(x0, y0, x1, y1 int, c color.NRGBA, filled bool) error {
-	err := checkCoords(x0, y0, x1, y1)
-	if err != nil {
-		return err
-	}
-	r := image.Rect(x0, y0, x1, y1).Canon()
-	r.Max = r.Max.Add(image.Pt(1, 1))
-	d.edit(r, func(p *image.NRGBA) {
-		for y := r.Min.Y; y < r.Max.Y; y++ {
-			edge := y == r.Min.Y || y == r.Max.Y-1
-			for x := r.Min.X; x < r.Max.X; x++ {
-				if filled || edge || x == r.Min.X || x == r.Max.X-1 {
-					setClipped(p, x, y, c)
-				}
-			}
-		}
-	})
-	return nil
+// Rect draws the rectangle whose opposite corners are (x0, y0) and (x1, y1),
+// both included: outline in line, area in fill, as style says.
+func (d *Document) Rect(x0, y0, x1, y1 int, style Style, line, fill color.NRGBA, pen Pen) error {
+	return d.boxShape(rectShape, x0, y0, x1, y1, style, line, fill, pen)
 }
 
-// Ellipse draws the ellipse inscribed in the rectangle (x0, y0)-(x1, y1),
-// outline or filled. The algorithm is Alois Zingl's plotEllipseRect ("A
-// Rasterizing Algorithm for Drawing Curves", 2012), all in integers, which
-// handles even diameters without a lopsided pixel.
-func (d *Document) Ellipse(x0, y0, x1, y1 int, c color.NRGBA, filled bool) error {
+// Ellipse draws the ellipse inscribed in the rectangle (x0, y0)-(x1, y1).
+// The algorithm is Alois Zingl's plotEllipseRect ("A Rasterizing Algorithm
+// for Drawing Curves", 2012), all in integers, which handles even diameters
+// without a lopsided pixel.
+func (d *Document) Ellipse(x0, y0, x1, y1 int, style Style, line, fill color.NRGBA, pen Pen) error {
+	return d.boxShape(ellipseShape, x0, y0, x1, y1, style, line, fill, pen)
+}
+
+func (d *Document) boxShape(geom func(x0, y0, x1, y1 int) shape, x0, y0, x1, y1 int, style Style, line, fill color.NRGBA, pen Pen) error {
 	err := checkCoords(x0, y0, x1, y1)
 	if err != nil {
 		return err
 	}
-	r := image.Rect(x0, y0, x1, y1).Canon()
-	r.Max = r.Max.Add(image.Pt(1, 1))
-	d.edit(r, func(p *image.NRGBA) {
-		plot := func(xa, xb, y int) {
-			if !filled {
-				setClipped(p, xa, y, c)
-				setClipped(p, xb, y, c)
-				return
-			}
-			for x := xa; x <= xb; x++ {
-				setClipped(p, x, y, c)
-			}
-		}
-		ellipseRect(r.Min.X, r.Min.Y, r.Max.X-1, r.Max.Y-1, plot)
-	})
+	if style == StyleFill {
+		pen = Pen{}
+	}
+	d.paint(geom(insetForPen(x0, y0, x1, y1, pen)), style, line, fill, pen)
 	return nil
 }
 
@@ -90,11 +64,5 @@ func ellipseRect(x0, y0, x1, y1 int, span func(xa, xb, y int)) {
 		span(x0-1, x1+1, yt)
 		yb++
 		yt--
-	}
-}
-
-func setClipped(p *image.NRGBA, x, y int, c color.NRGBA) {
-	if (image.Point{x, y}).In(p.Rect) {
-		p.SetNRGBA(x, y, c)
 	}
 }

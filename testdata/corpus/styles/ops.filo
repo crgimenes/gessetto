@@ -1,0 +1,4 @@
+(doc-new 9 7)
+(doc-rect-both 0 0 8 6 "#0000ff" "#ffff00")
+(doc-pen 2 "square")
+(doc-ellipse-both 2 1 6 5 "#ff0000" "#00aa00")

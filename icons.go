@@ -37,4 +37,5 @@ var (
 	iconRect    = loadIcon("square")
 	iconEllipse = loadIcon("circle")
 	iconFilled  = loadIcon("square-fill")
+	iconBoth    = loadIcon("square-half")
 )

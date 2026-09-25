@@ -7,6 +7,7 @@ import (
 	"math"
 	"strconv"
 
+	"github.com/crgimenes/gessetto/doc"
 	ui "github.com/crgimenes/minigui"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -158,14 +159,27 @@ func (a *app) drawSeparators(screen *ebiten.Image) {
 // toolOptions shows what the active tool can be set to, next to Undo/Redo.
 func (a *app) toolOptions() {
 	switch a.ed.tool {
+	case toolEraser:
+		a.widthSlider("eraser", &a.ed.eraser.Width)
+	case toolLine:
+		a.penOptions()
 	case toolRect, toolEllipse:
-		a.top.SameLine()
-		if a.top.IconToggle("outline", toolIcon(a.ed.tool), "Outline", !a.ed.filled) {
-			a.ed.filled = false
+		for _, s := range []struct {
+			id    ui.ID
+			icon  *ui.Icon
+			style doc.Style
+		}{
+			{"outline", toolIcon(a.ed.tool), doc.StyleOutline},
+			{"both", iconBoth, doc.StyleBoth},
+			{"filled", iconFilled, doc.StyleFill},
+		} {
+			a.top.SameLine()
+			if a.top.IconToggle(s.id, s.icon, "", a.ed.style == s.style) {
+				a.ed.style = s.style
+			}
 		}
-		a.top.SameLine()
-		if a.top.IconToggle("filled", iconFilled, "Filled", a.ed.filled) {
-			a.ed.filled = true
+		if a.ed.style != doc.StyleFill {
+			a.penOptions()
 		}
 	case toolFill:
 		a.top.SameLine()
@@ -175,6 +189,28 @@ func (a *app) toolOptions() {
 		if a.top.Slider("tolerance", &v, 0, 255) {
 			a.ed.tolerance = int(math.Round(v))
 		}
+	}
+}
+
+// maxPenUI is the widest pen the slider offers; the document takes more.
+const maxPenUI = 32
+
+func (a *app) widthSlider(id ui.ID, width *int) {
+	w := max(*width, 1)
+	a.top.SameLine()
+	a.top.Label(fmt.Sprintf("  Width %2d", w))
+	a.top.SameLine()
+	v := float64(w)
+	if a.top.Slider(id, &v, 1, maxPenUI) {
+		*width = int(math.Round(v))
+	}
+}
+
+func (a *app) penOptions() {
+	a.widthSlider("width", &a.ed.pen.Width)
+	a.top.SameLine()
+	if a.top.IconToggle("round", iconEllipse, "Round", a.ed.pen.Round) {
+		a.ed.pen.Round = !a.ed.pen.Round
 	}
 }
 

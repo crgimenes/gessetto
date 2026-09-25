@@ -21,9 +21,11 @@ A case holds:
 |---|---|
 | `(doc-new w h)` | new document, one transparent layer "Background"; fails if one is open |
 | `(doc-pixel x y color)` | replace one pixel of the active layer |
+| `(doc-pen width tip)` | outlines drawn after it use this pen: width 1 to 64, tip `"square"` or `"round"`; starts as 1 `"square"` |
 | `(doc-line x0 y0 x1 y1 color)` | Bresenham line, endpoints included, replacing pixels |
 | `(doc-rect x0 y0 x1 y1 color)` / `(doc-fill-rect ...)` | outline / area of the rectangle with those opposite corners, both included |
 | `(doc-ellipse x0 y0 x1 y1 color)` / `(doc-fill-ellipse ...)` | outline / area of the ellipse inscribed in that rectangle |
+| `(doc-rect-both x0 y0 x1 y1 outline fill)` / `(doc-ellipse-both ...)` | area in fill, then outline in outline on top |
 | `(doc-fill x y color tolerance)` | 4-connected bucket fill of the active layer, tolerance 0 to 255 |
 | `(doc-add-layer name)` | transparent layer above the active one, which it becomes |
 | `(doc-select-layer i)` | make layer `i` (0 is the bottom) active |
@@ -45,6 +47,16 @@ Line, as in `doc/draw.go`:
           e2 = 2e
           if e2 >= dy: e += dy, x += sx
           if e2 <= dx: e += dx, y += sy
+
+Pen: the footprint of width w covers offsets lo..lo+w-1 on each axis, with
+lo = -((w-1)/2). A round tip keeps the offset (i, j), i and j from 0 to w-1,
+only when di²+dj² <= w²-w, where di = 2i-(w-1) and dj = 2j-(w-1). Every
+outline pixel stamps the footprint. A line is centered on its Bresenham
+pixels; a rectangle or ellipse is drawn on its box inset by (w-1)/2 at the
+top-left and w/2 at the bottom-right, so the thick outline grows inward. A
+box thinner than the pen collapses to its middle. Filled shapes ignore the
+pen. A shape with both paints its whole area first (the rows the thin shape
+covers, outline included) and then stamps the outline over it.
 
 Ellipse in the box (x0, y0)-(x1, y1), x0 <= x1 and y0 <= y1, after Alois
 Zingl's plotEllipseRect, in 64-bit integers. `span(xa, xb, y)` plots xa and xb

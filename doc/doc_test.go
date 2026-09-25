@@ -66,7 +66,7 @@ func TestCoordinateCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = d.Line(0, 0, MaxCoord+1, 0, red)
+	err = d.Line(0, 0, MaxCoord+1, 0, red, Pen{})
 	if !errors.Is(err, ErrCoord) {
 		t.Fatalf("err %v, want ErrCoord", err)
 	}
@@ -157,7 +157,7 @@ func TestGroupIsOneUndoStep(t *testing.T) {
 	_ = d.SetPixel(0, 0, blue)
 	d.BeginGroup()
 	_ = d.SetPixel(1, 0, red)
-	_ = d.Line(1, 0, 3, 0, red)
+	_ = d.Line(1, 0, 3, 0, red, Pen{})
 	_ = d.SetPixel(0, 0, red)
 	d.EndGroup()
 	want := []color.NRGBA{red, red, red, red}
@@ -226,9 +226,9 @@ func TestFlattenIntoMatchesFlatten(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = d.Line(0, 0, 4, 3, color.NRGBA{B: 0xff, A: 0x80})
+	_ = d.Line(0, 0, 4, 3, color.NRGBA{B: 0xff, A: 0x80}, Pen{})
 	_ = d.AddLayer("top")
-	_ = d.Line(4, 0, 0, 3, color.NRGBA{R: 0xff, A: 0x60})
+	_ = d.Line(4, 0, 0, 3, color.NRGBA{R: 0xff, A: 0x60}, Pen{})
 	full := d.Flatten()
 	part := image.NewNRGBA(d.Bounds())
 	d.FlattenInto(part, image.Rect(1, 1, 4, 3))

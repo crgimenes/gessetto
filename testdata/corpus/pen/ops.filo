@@ -1,0 +1,7 @@
+(doc-new 12 9)
+(doc-pen 3 "round")
+(doc-line 1 1 10 7 "#ff0000")
+(doc-pen 2 "square")
+(doc-rect 0 0 11 8 "#0000ff")
+(doc-pen 1 "square")
+(doc-line 0 8 11 0 "#00aa00")

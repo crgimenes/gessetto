@@ -32,13 +32,13 @@ func TestShapes(t *testing.T) {
 		draw func(d *Document) error
 		want string
 	}{
-		{"rect outline", 4, 3, func(d *Document) error { return d.Rect(3, 2, 0, 0, ink, false) }, "####\n#..#\n####\n"},
-		{"rect filled clipped", 3, 2, func(d *Document) error { return d.Rect(1, -5, 9, 0, ink, true) }, ".##\n...\n"},
-		{"circle 5", 5, 5, func(d *Document) error { return d.Ellipse(0, 0, 4, 4, ink, false) }, ".###.\n#...#\n#...#\n#...#\n.###.\n"},
-		{"even ellipse", 6, 4, func(d *Document) error { return d.Ellipse(0, 0, 5, 3, ink, false) }, ".####.\n#....#\n#....#\n.####.\n"},
-		{"filled ellipse", 7, 3, func(d *Document) error { return d.Ellipse(6, 2, 0, 0, ink, true) }, ".#####.\n#######\n.#####.\n"},
-		{"thin ellipse keeps its tips", 2, 5, func(d *Document) error { return d.Ellipse(0, 0, 1, 4, ink, false) }, "##\n##\n##\n##\n##\n"},
-		{"zero-width ellipse is a line", 1, 4, func(d *Document) error { return d.Ellipse(0, 0, 0, 3, ink, false) }, "#\n#\n#\n#\n"},
+		{"rect outline", 4, 3, func(d *Document) error { return d.Rect(3, 2, 0, 0, StyleOutline, ink, ink, Pen{}) }, "####\n#..#\n####\n"},
+		{"rect filled clipped", 3, 2, func(d *Document) error { return d.Rect(1, -5, 9, 0, StyleFill, ink, ink, Pen{}) }, ".##\n...\n"},
+		{"circle 5", 5, 5, func(d *Document) error { return d.Ellipse(0, 0, 4, 4, StyleOutline, ink, ink, Pen{}) }, ".###.\n#...#\n#...#\n#...#\n.###.\n"},
+		{"even ellipse", 6, 4, func(d *Document) error { return d.Ellipse(0, 0, 5, 3, StyleOutline, ink, ink, Pen{}) }, ".####.\n#....#\n#....#\n.####.\n"},
+		{"filled ellipse", 7, 3, func(d *Document) error { return d.Ellipse(6, 2, 0, 0, StyleFill, ink, ink, Pen{}) }, ".#####.\n#######\n.#####.\n"},
+		{"thin ellipse keeps its tips", 2, 5, func(d *Document) error { return d.Ellipse(0, 0, 1, 4, StyleOutline, ink, ink, Pen{}) }, "##\n##\n##\n##\n##\n"},
+		{"zero-width ellipse is a line", 1, 4, func(d *Document) error { return d.Ellipse(0, 0, 0, 3, StyleOutline, ink, ink, Pen{}) }, "#\n#\n#\n#\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -65,8 +65,8 @@ func TestFill(t *testing.T) {
 	}
 	wall := color.NRGBA{B: 0xff, A: 0xff}
 	// A wall with a diagonal gap: 4-connected fill must not leak through it.
-	_ = d.Line(2, 0, 2, 1, wall)
-	_ = d.Line(3, 2, 4, 2, wall)
+	_ = d.Line(2, 0, 2, 1, wall, Pen{})
+	_ = d.Line(3, 2, 4, 2, wall, Pen{})
 	_ = d.SetPixel(0, 3, color.NRGBA{A: 0x10})
 	d.Fill(0, 0, ink, 0)
 	got := pattern(d)
@@ -104,7 +104,7 @@ func TestRevertGroupKeepsGrouping(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.BeginGroup()
-	_ = d.Line(0, 0, 3, 0, ink)
+	_ = d.Line(0, 0, 3, 0, ink, Pen{})
 	d.RevertGroup()
 	if d.PixelAt(3, 0) != (color.NRGBA{}) {
 		t.Fatal("revert must restore the pixels")

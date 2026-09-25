@@ -44,7 +44,9 @@ type editor struct {
 	bg   color.NRGBA
 
 	// Tool options.
-	filled    bool
+	pen       doc.Pen
+	eraser    doc.Pen
+	style     doc.Style
 	tolerance int
 
 	stroking  bool
@@ -63,10 +65,12 @@ type editor struct {
 
 func newEditor(d *doc.Document) *editor {
 	return &editor{
-		d:    d,
-		fg:   color.NRGBA{A: 0xff},
-		bg:   color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff},
-		full: true,
+		d:  d,
+		fg: color.NRGBA{A: 0xff},
+		bg: color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff},
+		// Paint's smallest eraser.
+		eraser: doc.Pen{Width: 4},
+		full:   true,
 	}
 }
 
@@ -95,8 +99,35 @@ func (e *editor) press(p image.Point, secondary bool) {
 	}
 	e.d.BeginGroup()
 	e.stroking = true
-	_ = e.d.SetPixel(p.X, p.Y, e.paint()) // clampCoord keeps p in range
-	e.touch(image.Rectangle{Min: p, Max: p.Add(image.Pt(1, 1))})
+	e.strokeTo(p)
+}
+
+// cursorPen is what the next click stamps, for the outline under the pointer.
+func (e *editor) cursorPen() doc.Pen {
+	switch {
+	case e.tool == toolEraser:
+		return e.eraser
+	case e.tool.shape() && (e.tool == toolLine || e.style != doc.StyleFill):
+		return e.pen
+	}
+	return doc.Pen{}
+}
+
+// strokePen is the pencil's single pixel, or the eraser's own size.
+func (e *editor) strokePen() doc.Pen {
+	if e.tool == toolEraser {
+		return e.eraser
+	}
+	return doc.Pen{}
+}
+
+func (e *editor) strokeTo(p image.Point) {
+	pen := e.strokePen()
+	_ = e.d.Line(e.last.X, e.last.Y, p.X, p.Y, e.paint(), pen) // clampCoord keeps p in range
+	r := image.Rectangle{Min: e.last, Max: p}.Canon()
+	w := pen.Width
+	e.touch(image.Rectangle{Min: r.Min.Sub(image.Pt(w, w)), Max: r.Max.Add(image.Pt(w+1, w+1))})
+	e.last = p
 }
 
 func (e *editor) drag(p image.Point) {
@@ -118,10 +149,7 @@ func (e *editor) drag(p image.Point) {
 		e.last = p
 		return
 	}
-	_ = e.d.Line(e.last.X, e.last.Y, p.X, p.Y, e.paint()) // clampCoord keeps p in range
-	r := image.Rectangle{Min: e.last, Max: p}.Canon()
-	e.touch(image.Rectangle{Min: r.Min, Max: r.Max.Add(image.Pt(1, 1))})
-	e.last = p
+	e.strokeTo(p)
 }
 
 func (e *editor) release() {
@@ -139,17 +167,24 @@ func (e *editor) drawShape(p image.Point) {
 	if e.constrain {
 		p = clampCoord(constrained(e.tool, a, p))
 	}
-	c := e.paint()
+	// As in Paint: outline in the foreground, area in the background; the
+	// right button swaps them.
+	line, fill := e.fg, e.bg
+	if e.secondary {
+		line, fill = fill, line
+	}
 	switch e.tool {
 	case toolLine:
-		_ = e.d.Line(a.X, a.Y, p.X, p.Y, c) // clampCoord keeps p in range
+		_ = e.d.Line(a.X, a.Y, p.X, p.Y, line, e.pen) // clampCoord keeps p in range
 	case toolRect:
-		_ = e.d.Rect(a.X, a.Y, p.X, p.Y, c, e.filled)
+		_ = e.d.Rect(a.X, a.Y, p.X, p.Y, e.style, line, fill, e.pen)
 	case toolEllipse:
-		_ = e.d.Ellipse(a.X, a.Y, p.X, p.Y, c, e.filled)
+		_ = e.d.Ellipse(a.X, a.Y, p.X, p.Y, e.style, line, fill, e.pen)
 	}
 	r := image.Rectangle{Min: a, Max: p}.Canon()
-	r.Max = r.Max.Add(image.Pt(1, 1))
+	// A line's thick outline reaches past its endpoints.
+	w := e.pen.Width
+	r = image.Rectangle{Min: r.Min.Sub(image.Pt(w, w)), Max: r.Max.Add(image.Pt(w+1, w+1))}
 	e.touch(e.shapeRect)
 	e.touch(r)
 	e.shapeRect = r

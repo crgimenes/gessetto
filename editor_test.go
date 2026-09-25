@@ -146,3 +146,52 @@ func TestFillToolUsesToleranceAndSecondary(t *testing.T) {
 		t.Fatal("a fill is one click, not a stroke")
 	}
 }
+
+func TestThickLineRepaintsItsFootprint(t *testing.T) {
+	e := newTestEditor(t, 12, 12)
+	e.tool = toolLine
+	e.pen = doc.Pen{Width: 5}
+	e.press(image.Pt(5, 5), false)
+	e.drag(image.Pt(6, 5))
+	e.release()
+	r, _ := e.takeChanged()
+	if !image.Rect(3, 3, 9, 8).In(r) {
+		t.Fatalf("changed %v must cover the 5px footprint around the line", r)
+	}
+	if e.d.PixelAt(3, 3) != e.fg || e.d.PixelAt(8, 7) != e.fg {
+		t.Fatal("want the square footprint at both ends")
+	}
+}
+
+func TestShapeColorsFollowPaint(t *testing.T) {
+	e := newTestEditor(t, 5, 5)
+	e.tool = toolRect
+	e.style = doc.StyleBoth
+	e.press(image.Pt(0, 0), true)
+	e.drag(image.Pt(4, 4))
+	e.release()
+	if e.d.PixelAt(0, 0) != e.bg || e.d.PixelAt(2, 2) != e.fg {
+		t.Fatal("the right button must swap: outline in the background, area in the foreground")
+	}
+}
+
+func TestEraserHasItsOwnSize(t *testing.T) {
+	e := newTestEditor(t, 8, 8)
+	e.tool = toolRect
+	e.style = doc.StyleFill
+	e.press(image.Pt(0, 0), true)
+	e.drag(image.Pt(7, 7))
+	e.release()
+	e.tool = toolEraser
+	e.pen = doc.Pen{Width: 1}
+	e.press(image.Pt(4, 4), false)
+	e.release()
+	for _, p := range []image.Point{{3, 3}, {6, 6}} {
+		if e.d.PixelAt(p.X, p.Y) != (color.NRGBA{}) {
+			t.Fatalf("%v not erased: the 4px eraser must cover (3,3)-(6,6)", p)
+		}
+	}
+	if e.d.PixelAt(2, 2) == (color.NRGBA{}) || e.d.PixelAt(7, 7) == (color.NRGBA{}) {
+		t.Fatal("the eraser reached past its 4px footprint")
+	}
+}

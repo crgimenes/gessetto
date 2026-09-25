@@ -29,40 +29,14 @@ func (d *Document) SetPixel(x, y int, c color.NRGBA) error {
 	return nil
 }
 
-// Line is Bresenham's, endpoints included: integer-only so every engine
-// lights the same pixels.
-func (d *Document) Line(x0, y0, x1, y1 int, c color.NRGBA) error {
+// Line runs through the pen's center: a thick line is centered on the
+// pixels a thin one would light.
+func (d *Document) Line(x0, y0, x1, y1 int, c color.NRGBA, pen Pen) error {
 	err := checkCoords(x0, y0, x1, y1)
 	if err != nil {
 		return err
 	}
-	r := image.Rect(x0, y0, x1, y1).Canon()
-	r.Max = r.Max.Add(image.Pt(1, 1))
-	d.edit(r, func(p *image.NRGBA) {
-		dx := abs(x1 - x0)
-		dy := -abs(y1 - y0)
-		sx := sign(x1 - x0)
-		sy := sign(y1 - y0)
-		e := dx + dy
-		x, y := x0, y0
-		for {
-			if (image.Point{x, y}).In(p.Rect) {
-				p.SetNRGBA(x, y, c)
-			}
-			if x == x1 && y == y1 {
-				return
-			}
-			e2 := 2 * e
-			if e2 >= dy {
-				e += dy
-				x += sx
-			}
-			if e2 <= dx {
-				e += dx
-				y += sy
-			}
-		}
-	})
+	d.paint(lineShape(x0, y0, x1, y1), StyleOutline, c, c, pen)
 	return nil
 }
 

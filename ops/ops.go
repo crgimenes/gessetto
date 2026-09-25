@@ -44,7 +44,8 @@ func Apply(ctx context.Context, src string, d *doc.Document) (*doc.Document, err
 }
 
 type state struct {
-	d *doc.Document
+	d   *doc.Document
+	pen doc.Pen
 }
 
 var empty = filo.VList(nil)
@@ -52,11 +53,14 @@ var empty = filo.VList(nil)
 func (s *state) register(eng *filo.Engine) {
 	eng.MustRegisterBuiltin("doc-new", s.docNew)
 	eng.MustRegisterBuiltin("doc-pixel", s.withDoc(s.pixel))
+	eng.MustRegisterBuiltin("doc-pen", s.setPen)
 	eng.MustRegisterBuiltin("doc-line", s.withDoc(s.line))
-	eng.MustRegisterBuiltin("doc-rect", s.withDoc(s.box(s.rectDraw(false))))
-	eng.MustRegisterBuiltin("doc-fill-rect", s.withDoc(s.box(s.rectDraw(true))))
-	eng.MustRegisterBuiltin("doc-ellipse", s.withDoc(s.box(s.ellipseDraw(false))))
-	eng.MustRegisterBuiltin("doc-fill-ellipse", s.withDoc(s.box(s.ellipseDraw(true))))
+	eng.MustRegisterBuiltin("doc-rect", s.withDoc(s.box(s.shapeDraw(false, doc.StyleOutline), 1)))
+	eng.MustRegisterBuiltin("doc-fill-rect", s.withDoc(s.box(s.shapeDraw(false, doc.StyleFill), 1)))
+	eng.MustRegisterBuiltin("doc-rect-both", s.withDoc(s.box(s.shapeDraw(false, doc.StyleBoth), 2)))
+	eng.MustRegisterBuiltin("doc-ellipse", s.withDoc(s.box(s.shapeDraw(true, doc.StyleOutline), 1)))
+	eng.MustRegisterBuiltin("doc-fill-ellipse", s.withDoc(s.box(s.shapeDraw(true, doc.StyleFill), 1)))
+	eng.MustRegisterBuiltin("doc-ellipse-both", s.withDoc(s.box(s.shapeDraw(true, doc.StyleBoth), 2)))
 	eng.MustRegisterBuiltin("doc-fill", s.withDoc(s.fill))
 	eng.MustRegisterBuiltin("doc-add-layer", s.withDoc(s.addLayer))
 	eng.MustRegisterBuiltin("doc-select-layer", s.withDoc(s.selectLayer))
@@ -118,36 +122,48 @@ func (s *state) line(args []filo.Value) (filo.Value, error) {
 	if err != nil {
 		return filo.Value{}, err
 	}
-	return empty, s.d.Line(ints[0], ints[1], ints[2], ints[3], c)
+	return empty, s.d.Line(ints[0], ints[1], ints[2], ints[3], c, s.pen)
 }
 
-type boxDraw func(x0, y0, x1, y1 int, c color.NRGBA) error
+type boxDraw func(x0, y0, x1, y1 int, line, fill color.NRGBA) error
 
 // The document may not exist yet when builtins are registered, so each call
 // looks it up through s.
-func (s *state) rectDraw(filled bool) boxDraw {
-	return func(x0, y0, x1, y1 int, c color.NRGBA) error { return s.d.Rect(x0, y0, x1, y1, c, filled) }
+func (s *state) shapeDraw(ellipse bool, style doc.Style) boxDraw {
+	return func(x0, y0, x1, y1 int, line, fill color.NRGBA) error {
+		if ellipse {
+			return s.d.Ellipse(x0, y0, x1, y1, style, line, fill, s.pen)
+		}
+		return s.d.Rect(x0, y0, x1, y1, style, line, fill, s.pen)
+	}
 }
 
-func (s *state) ellipseDraw(filled bool) boxDraw {
-	return func(x0, y0, x1, y1 int, c color.NRGBA) error { return s.d.Ellipse(x0, y0, x1, y1, c, filled) }
-}
-
-// box reads (x0 y0 x1 y1 color): two opposite corners, both included.
-func (s *state) box(draw boxDraw) func(args []filo.Value) (filo.Value, error) {
+// box reads (x0 y0 x1 y1 color) or, with two colors, (x0 y0 x1 y1 outline
+// fill): two opposite corners, both included.
+func (s *state) box(draw boxDraw, colors int) func(args []filo.Value) (filo.Value, error) {
 	return func(args []filo.Value) (filo.Value, error) {
-		if len(args) != 5 {
+		if len(args) != 4+colors {
+			if colors == 2 {
+				return filo.Value{}, fmt.Errorf("want (x0 y0 x1 y1 outline fill), got %d arguments", len(args))
+			}
 			return filo.Value{}, fmt.Errorf("want (x0 y0 x1 y1 color), got %d arguments", len(args))
 		}
 		ints, err := intArgs(args[:4], "x0", "y0", "x1", "y1")
 		if err != nil {
 			return filo.Value{}, err
 		}
-		c, err := colorArg(args[4])
+		line, err := colorArg(args[4])
 		if err != nil {
 			return filo.Value{}, err
 		}
-		return empty, draw(ints[0], ints[1], ints[2], ints[3], c)
+		fill := line
+		if colors == 2 {
+			fill, err = colorArg(args[5])
+			if err != nil {
+				return filo.Value{}, err
+			}
+		}
+		return empty, draw(ints[0], ints[1], ints[2], ints[3], line, fill)
 	}
 }
 
@@ -167,6 +183,30 @@ func (s *state) fill(args []filo.Value) (filo.Value, error) {
 		return filo.Value{}, err
 	}
 	s.d.Fill(ints[0], ints[1], c, ints[2])
+	return empty, nil
+}
+
+// setPen is state, like picking up another pen: it applies to the outlines
+// drawn after it, so the other builtins keep their arguments.
+func (s *state) setPen(_ context.Context, args []filo.Value) (filo.Value, error) {
+	if len(args) != 2 {
+		return filo.Value{}, fmt.Errorf("want (width tip), got %d arguments", len(args))
+	}
+	ints, err := intArgs(args[:1], "width")
+	if err != nil {
+		return filo.Value{}, err
+	}
+	if ints[0] < 1 || ints[0] > doc.MaxWidth {
+		return filo.Value{}, fmt.Errorf("width: want 1 to %d, got %d", doc.MaxWidth, ints[0])
+	}
+	tip, err := args[1].AsString()
+	if err != nil {
+		return filo.Value{}, fmt.Errorf("tip: %w", err)
+	}
+	if tip != "square" && tip != "round" {
+		return filo.Value{}, fmt.Errorf("tip: want \"square\" or \"round\", got %q", tip)
+	}
+	s.pen = doc.Pen{Width: ints[0], Round: tip == "round"}
 	return empty, nil
 }
 
