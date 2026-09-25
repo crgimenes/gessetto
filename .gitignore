@@ -30,3 +30,12 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+project.md
+
+TODO.md
+
+# Build output
+/gessetto
+dist/
+release.sh
+.DS_Store
