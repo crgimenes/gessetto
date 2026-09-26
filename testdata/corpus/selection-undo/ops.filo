@@ -1,0 +1,7 @@
+(doc-new 4 2)
+(doc-fill-rect 0 0 1 1 "#00aa00")
+(doc-select 0 0 1 1)
+(doc-move-selection 2 0)
+(doc-undo)
+(doc-select 0 0 0 1)
+(doc-move-selection 3 0)

@@ -1,0 +1,4 @@
+(doc-new 17 11)
+(doc-curve 0 10 0 0 16 0 16 10 "#ff0000")
+(doc-pen 2 "round")
+(doc-curve 0 6 6 -4 10 14 16 6 "#0000ff")

@@ -75,12 +75,10 @@ func (a *app) menus() []struct {
 			{title: "Undo", shortcut: "cmd+z", run: a.ed.undo, disabled: !d.CanUndo()},
 			{title: "Redo", shortcut: "cmd+shift+z", run: a.ed.redo, disabled: !d.CanRedo()},
 			{sep: true},
-			// The menu takes Cmd+C before the window sees it, so text fields get
-			// these by injection into the next frame's input.
-			{title: "Cut", shortcut: "cmd+x", run: func() { a.inject.Cut = true }},
-			{title: "Copy", shortcut: "cmd+c", run: func() { a.inject.Copy = true }},
-			{title: "Paste", shortcut: "cmd+v", run: func() { a.inject.Paste = true }},
-			{title: "Select All", shortcut: "cmd+a", run: func() { a.inject.SelectAll = true }},
+			{title: "Cut", shortcut: "cmd+x", run: a.editCut},
+			{title: "Copy", shortcut: "cmd+c", run: a.editCopy},
+			{title: "Paste", shortcut: "cmd+v", run: a.editPaste},
+			{title: "Select All", shortcut: "cmd+a", run: a.editSelectAll},
 		}},
 		{"View", []command{
 			{title: "Zoom In", shortcut: "cmd+=", run: func() { a.zoomBy(1) }},

@@ -195,3 +195,138 @@ func TestEraserHasItsOwnSize(t *testing.T) {
 		t.Fatal("the eraser reached past its 4px footprint")
 	}
 }
+
+func TestSelectToolMarqueeMoveAndDrop(t *testing.T) {
+	e := newTestEditor(t, 8, 4)
+	red := color.NRGBA{R: 0xff, A: 0xff}
+	_ = e.d.Rect(0, 0, 1, 1, doc.StyleFill, red, red, doc.Pen{})
+	e.setTool(toolSelect)
+
+	e.press(image.Pt(0, 0), false)
+	e.drag(image.Pt(1, 1))
+	e.release()
+	r, ok := e.d.Selection()
+	if !ok || r != image.Rect(0, 0, 2, 2) {
+		t.Fatalf("selection %v %v, want (0,0)-(2,2)", r, ok)
+	}
+
+	e.takeChanged()
+	e.duplicate = true
+	e.press(image.Pt(1, 1), false)
+	e.drag(image.Pt(5, 3))
+	e.release()
+	r, _ = e.d.Selection()
+	if r != image.Rect(4, 2, 6, 4) {
+		t.Fatalf("moved to %v, want (4,2)-(6,4)", r)
+	}
+	changed, _ := e.takeChanged()
+	if !image.Rect(0, 0, 6, 4).In(changed) {
+		t.Fatalf("changed %v must cover where it was and where it went", changed)
+	}
+
+	e.setTool(toolPencil)
+	_, ok = e.d.Selection()
+	if ok {
+		t.Fatal("switching tools must drop the selection")
+	}
+	if e.d.PixelAt(0, 0) != red || e.d.PixelAt(5, 3) != red {
+		t.Fatal("Option-drag must leave the source and drop the copy")
+	}
+	e.undo()
+	if e.d.PixelAt(5, 3) != (color.NRGBA{}) || e.d.PixelAt(0, 0) != red {
+		t.Fatal("one undo must take back the whole duplicate")
+	}
+}
+
+func TestSelectClickDeselects(t *testing.T) {
+	e := newTestEditor(t, 4, 4)
+	e.setTool(toolSelect)
+	e.press(image.Pt(0, 0), false)
+	e.drag(image.Pt(2, 2))
+	e.release()
+	e.press(image.Pt(3, 3), false)
+	e.release()
+	_, ok := e.d.Selection()
+	if ok {
+		t.Fatal("a click outside the selection must deselect")
+	}
+}
+
+func TestSelectionKeyFollowsBackground(t *testing.T) {
+	e := newTestEditor(t, 4, 1)
+	blue := color.NRGBA{B: 0xff, A: 0xff}
+	_ = e.d.SetPixel(0, 0, e.bg)
+	_ = e.d.SetPixel(2, 0, blue)
+	e.clearSel = true
+	e.syncSelectionKey()
+	e.setTool(toolSelect)
+	e.d.Select(image.Rect(0, 0, 1, 1))
+	e.press(image.Pt(0, 0), false)
+	e.drag(image.Pt(2, 0))
+	e.release()
+	e.drop()
+	if e.d.PixelAt(2, 0) != blue {
+		t.Fatal("a transparent selection of the background color must not cover blue")
+	}
+}
+
+func TestColorEraserOnlyTouchesTheForeground(t *testing.T) {
+	e := newTestEditor(t, 6, 1)
+	blue := color.NRGBA{B: 0xff, A: 0xff}
+	_ = e.d.SetPixel(1, 0, e.fg)
+	_ = e.d.SetPixel(2, 0, blue)
+	e.tool = toolEraser
+	e.press(image.Pt(0, 0), true)
+	e.drag(image.Pt(5, 0))
+	e.release()
+	if e.d.PixelAt(1, 0) != e.bg || e.d.PixelAt(2, 0) != blue || e.d.PixelAt(4, 0) != (color.NRGBA{}) {
+		t.Fatal("the right-button eraser must turn only the foreground color into the background")
+	}
+}
+
+func TestMagnifierDoesNotDraw(t *testing.T) {
+	e := newTestEditor(t, 2, 2)
+	e.setTool(toolZoom)
+	e.press(image.Pt(0, 0), false)
+	e.release()
+	if e.d.CanUndo() {
+		t.Fatal("the magnifier must never edit the picture")
+	}
+}
+
+func TestCurveToolLineThenTwoBends(t *testing.T) {
+	e := newTestEditor(t, 17, 7)
+	e.setTool(toolCurve)
+	e.press(image.Pt(0, 6), false)
+	e.drag(image.Pt(16, 6))
+	e.release()
+	if e.d.PixelAt(8, 6) != e.fg {
+		t.Fatal("the first drag must lay a straight line")
+	}
+	e.press(image.Pt(0, 0), false)
+	e.release()
+	e.press(image.Pt(16, 0), false)
+	e.release()
+	if e.curveStage != 0 {
+		t.Fatal("the second bend must finish the curve")
+	}
+	if e.d.PixelAt(8, 6) != (color.NRGBA{}) || e.d.PixelAt(8, 2) != e.fg {
+		t.Fatal("want the line bent into an arch peaking near y=2")
+	}
+	e.undo()
+	if e.d.CanUndo() || e.d.PixelAt(0, 6) != (color.NRGBA{}) {
+		t.Fatal("the whole curve must be one undo step")
+	}
+}
+
+func TestCurveCommitsOnToolSwitch(t *testing.T) {
+	e := newTestEditor(t, 8, 3)
+	e.setTool(toolCurve)
+	e.press(image.Pt(0, 1), false)
+	e.drag(image.Pt(7, 1))
+	e.release()
+	e.setTool(toolPencil)
+	if e.curveStage != 0 || !e.d.CanUndo() || e.d.PixelAt(4, 1) != e.fg {
+		t.Fatal("switching tools must keep the unbent curve as a line")
+	}
+}

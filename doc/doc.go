@@ -37,6 +37,8 @@ type Document struct {
 	layers        []*Layer
 	active        int
 	hist          history
+	sel           *selection
+	selKey        *color.NRGBA
 }
 
 func New(width, height int) (*Document, error) {
@@ -88,6 +90,7 @@ func (d *Document) Layers() []*Layer { return d.layers }
 func (d *Document) Active() int { return d.active }
 
 func (d *Document) SelectLayer(i int) error {
+	d.Drop()
 	d.EndGroup()
 	if i < 0 || i >= len(d.layers) {
 		return fmt.Errorf("%w: %d, document has %d", ErrNoLayer, i, len(d.layers))
@@ -99,6 +102,7 @@ func (d *Document) SelectLayer(i int) error {
 // AddLayer inserts a transparent layer above the active one and makes it
 // active.
 func (d *Document) AddLayer(name string) error {
+	d.Drop()
 	d.EndGroup()
 	if name == "" || !utf8.ValidString(name) || utf8.RuneCountInString(name) > maxLayerName {
 		return fmt.Errorf("%w: want 1 to %d characters of UTF-8", ErrLayerName, maxLayerName)

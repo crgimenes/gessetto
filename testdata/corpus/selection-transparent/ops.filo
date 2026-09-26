@@ -1,0 +1,8 @@
+(doc-new 6 3)
+(doc-fill-rect 3 0 5 2 "#0000ff")
+(doc-fill-rect 0 0 2 2 "#ffffff")
+(doc-pixel 1 1 "#ff0000")
+(doc-selection-mode "transparent" "#ffffff")
+(doc-select 0 0 2 2)
+(doc-duplicate-selection 3 0)
+(doc-drop)

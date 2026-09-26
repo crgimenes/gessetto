@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"image/color"
 	"math"
 	"strconv"
@@ -46,6 +47,8 @@ func Apply(ctx context.Context, src string, d *doc.Document) (*doc.Document, err
 type state struct {
 	d   *doc.Document
 	pen doc.Pen
+	// clip is the script's own clipboard: the system one is the host's.
+	clip *image.NRGBA
 }
 
 var empty = filo.VList(nil)
@@ -62,6 +65,21 @@ func (s *state) register(eng *filo.Engine) {
 	eng.MustRegisterBuiltin("doc-fill-ellipse", s.withDoc(s.box(s.shapeDraw(true, doc.StyleFill), 1)))
 	eng.MustRegisterBuiltin("doc-ellipse-both", s.withDoc(s.box(s.shapeDraw(true, doc.StyleBoth), 2)))
 	eng.MustRegisterBuiltin("doc-fill", s.withDoc(s.fill))
+	eng.MustRegisterBuiltin("doc-recolor", s.withDoc(s.recolor))
+	eng.MustRegisterBuiltin("doc-curve", s.withDoc(s.curve))
+	eng.MustRegisterBuiltin("doc-select", s.withDoc(s.selectRect))
+	eng.MustRegisterBuiltin("doc-move-selection", s.withDoc(s.moveSelection(false)))
+	eng.MustRegisterBuiltin("doc-duplicate-selection", s.withDoc(s.moveSelection(true)))
+	eng.MustRegisterBuiltin("doc-selection-mode", s.withDoc(s.selectionMode))
+	eng.MustRegisterBuiltin("doc-copy", s.withDoc(s.noArgs(func() { s.copySelection() })))
+	eng.MustRegisterBuiltin("doc-cut", s.withDoc(s.noArgs(func() {
+		if s.copySelection() {
+			s.d.DeleteSelection()
+		}
+	})))
+	eng.MustRegisterBuiltin("doc-paste", s.withDoc(s.paste))
+	eng.MustRegisterBuiltin("doc-drop", s.withDoc(s.noArgs(func() { s.d.Drop() })))
+	eng.MustRegisterBuiltin("doc-delete-selection", s.withDoc(s.noArgs(func() { s.d.DeleteSelection() })))
 	eng.MustRegisterBuiltin("doc-add-layer", s.withDoc(s.addLayer))
 	eng.MustRegisterBuiltin("doc-select-layer", s.withDoc(s.selectLayer))
 	eng.MustRegisterBuiltin("doc-undo", s.withDoc(s.undo))
@@ -165,6 +183,117 @@ func (s *state) box(draw boxDraw, colors int) func(args []filo.Value) (filo.Valu
 		}
 		return empty, draw(ints[0], ints[1], ints[2], ints[3], line, fill)
 	}
+}
+
+// selectRect takes two opposite corners, both included, as the shapes do.
+func (s *state) selectRect(args []filo.Value) (filo.Value, error) {
+	ints, err := intArgs(args, "x0", "y0", "x1", "y1")
+	if err != nil {
+		return filo.Value{}, err
+	}
+	r := image.Rect(ints[0], ints[1], ints[2], ints[3]).Canon()
+	r.Max = r.Max.Add(image.Pt(1, 1))
+	s.d.Select(r)
+	return empty, nil
+}
+
+func (s *state) moveSelection(duplicate bool) func(args []filo.Value) (filo.Value, error) {
+	return func(args []filo.Value) (filo.Value, error) {
+		ints, err := intArgs(args, "dx", "dy")
+		if err != nil {
+			return filo.Value{}, err
+		}
+		return empty, s.d.MoveSelection(ints[0], ints[1], duplicate)
+	}
+}
+
+// selectionMode reads ("opaque") or ("transparent" key-color).
+func (s *state) selectionMode(args []filo.Value) (filo.Value, error) {
+	if len(args) == 0 {
+		return filo.Value{}, errors.New(`want ("opaque") or ("transparent" color)`)
+	}
+	mode, err := args[0].AsString()
+	if err != nil {
+		return filo.Value{}, fmt.Errorf("mode: %w", err)
+	}
+	switch {
+	case mode == "opaque" && len(args) == 1:
+		s.d.SetSelectionKey(nil)
+		return empty, nil
+	case mode == "transparent" && len(args) == 2:
+		c, err := colorArg(args[1])
+		if err != nil {
+			return filo.Value{}, err
+		}
+		s.d.SetSelectionKey(&c)
+		return empty, nil
+	}
+	return filo.Value{}, fmt.Errorf(`want ("opaque") or ("transparent" color), got %q with %d arguments`, mode, len(args))
+}
+
+func (s *state) copySelection() bool {
+	img, ok := s.d.SelectionImage()
+	if ok {
+		s.clip = img
+	}
+	return ok
+}
+
+func (s *state) paste(args []filo.Value) (filo.Value, error) {
+	ints, err := intArgs(args, "x", "y")
+	if err != nil {
+		return filo.Value{}, err
+	}
+	if s.clip == nil {
+		return filo.Value{}, errors.New("nothing copied yet")
+	}
+	return empty, s.d.Paste(s.clip, image.Pt(ints[0], ints[1]))
+}
+
+func (s *state) noArgs(f func()) func(args []filo.Value) (filo.Value, error) {
+	return func(args []filo.Value) (filo.Value, error) {
+		if len(args) != 0 {
+			return filo.Value{}, fmt.Errorf("want no arguments, got %d", len(args))
+		}
+		f()
+		return empty, nil
+	}
+}
+
+// curve reads (x0 y0 cx1 cy1 cx2 cy2 x1 y1 color).
+func (s *state) curve(args []filo.Value) (filo.Value, error) {
+	if len(args) != 9 {
+		return filo.Value{}, fmt.Errorf("want (x0 y0 cx1 cy1 cx2 cy2 x1 y1 color), got %d arguments", len(args))
+	}
+	v, err := intArgs(args[:8], "x0", "y0", "cx1", "cy1", "cx2", "cy2", "x1", "y1")
+	if err != nil {
+		return filo.Value{}, err
+	}
+	c, err := colorArg(args[8])
+	if err != nil {
+		return filo.Value{}, err
+	}
+	return empty, s.d.Curve(image.Pt(v[0], v[1]), image.Pt(v[2], v[3]), image.Pt(v[4], v[5]), image.Pt(v[6], v[7]), c, s.pen)
+}
+
+// recolor reads (x0 y0 x1 y1 from to): the color eraser along a line.
+func (s *state) recolor(args []filo.Value) (filo.Value, error) {
+	if len(args) != 6 {
+		return filo.Value{}, fmt.Errorf("want (x0 y0 x1 y1 from to), got %d arguments", len(args))
+	}
+	ints, err := intArgs(args[:4], "x0", "y0", "x1", "y1")
+	if err != nil {
+		return filo.Value{}, err
+	}
+	from, err := colorArg(args[4])
+	if err != nil {
+		return filo.Value{}, err
+	}
+	to, err := colorArg(args[5])
+	if err != nil {
+		return filo.Value{}, err
+	}
+	return empty, s.d.Recolor(ints[0], ints[1], ints[2], ints[3], from, to, s.pen)
 }
 
 func (s *state) fill(args []filo.Value) (filo.Value, error) {

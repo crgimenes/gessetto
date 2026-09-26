@@ -149,10 +149,19 @@ func (d *Document) paint(s shape, style Style, line, fill color.NRGBA, pen Pen) 
 	lo, hi := pen.reach()
 	bounds := image.Rectangle{Min: s.bounds.Min.Sub(image.Pt(lo, lo)), Max: s.bounds.Max.Add(image.Pt(hi, hi))}
 	d.edit(bounds, func(p *image.NRGBA) {
+		// Clipped to the edit's own bounds, not the canvas: a pixel outside
+		// them would change without undo knowing, so a shape with wrong
+		// bounds shows as missing pixels instead.
+		clip := bounds.Intersect(p.Rect)
+		set := func(x, y int, c color.NRGBA) {
+			if (image.Point{x, y}).In(clip) {
+				p.SetNRGBA(x, y, c)
+			}
+		}
 		if style != StyleOutline && s.area != nil {
 			s.area(func(xa, xb, y int) {
 				for x := xa; x <= xb; x++ {
-					setClipped(p, x, y, fill)
+					set(x, y, fill)
 				}
 			})
 		}
@@ -162,7 +171,7 @@ func (d *Document) paint(s shape, style Style, line, fill color.NRGBA, pen Pen) 
 		fp := pen.footprint()
 		s.outline(func(x, y int) {
 			for _, o := range fp {
-				setClipped(p, x+o.X, y+o.Y, line)
+				set(x+o.X, y+o.Y, line)
 			}
 		})
 	})
@@ -187,8 +196,56 @@ func insetForPen(x0, y0, x1, y1 int, pen Pen) (int, int, int, int) {
 	return ax, ay, bx, by
 }
 
-func setClipped(p *image.NRGBA, x, y int, c color.NRGBA) {
-	if (image.Point{x, y}).In(p.Rect) {
-		p.SetNRGBA(x, y, c)
+// maxCurveSegments caps how finely a curve is cut into lines.
+const maxCurveSegments = 256
+
+// curveShape is the cubic Bézier from p0 to p3 with controls p1 and p2, cut
+// into n straight segments joined by Bresenham lines. Every point is an exact
+// fraction over n³ rounded half up, so every engine lands on the same pixels.
+func curveShape(p0, p1, p2, p3 image.Point) shape {
+	legs := chebyshev(p0, p1) + chebyshev(p1, p2) + chebyshev(p2, p3)
+	n := int64(min(max(legs/2, 1), maxCurveSegments))
+	at := func(i int64) image.Point {
+		u := n - i
+		w0, w1, w2, w3 := u*u*u, 3*u*u*i, 3*u*i*i, i*i*i
+		den := n * n * n
+		x := w0*int64(p0.X) + w1*int64(p1.X) + w2*int64(p2.X) + w3*int64(p3.X)
+		y := w0*int64(p0.Y) + w1*int64(p1.Y) + w2*int64(p2.Y) + w3*int64(p3.Y)
+		return image.Pt(int(roundDiv(x, den)), int(roundDiv(y, den)))
 	}
+	return shape{
+		bounds: Cover(p0, p1, p2, p3),
+		outline: func(plot func(x, y int)) {
+			prev := p0
+			for i := int64(1); i <= n; i++ {
+				next := at(i)
+				lineShape(prev.X, prev.Y, next.X, next.Y).outline(plot)
+				prev = next
+			}
+		},
+	}
+}
+
+// Cover is the smallest rectangle holding every point, each as a pixel. It
+// does not start from an empty rectangle: Union ignores empty ones, so a
+// rectangle grown from points by Union stays one pixel.
+func Cover(pts ...image.Point) image.Rectangle {
+	r := image.Rectangle{Min: pts[0], Max: pts[0].Add(image.Pt(1, 1))}
+	for _, q := range pts[1:] {
+		r.Min.X, r.Min.Y = min(r.Min.X, q.X), min(r.Min.Y, q.Y)
+		r.Max.X, r.Max.Y = max(r.Max.X, q.X+1), max(r.Max.Y, q.Y+1)
+	}
+	return r
+}
+
+func chebyshev(a, b image.Point) int { return max(abs(a.X-b.X), abs(a.Y-b.Y)) }
+
+// roundDiv is n/d rounded half up, for d > 0 and n of either sign.
+func roundDiv(n, d int64) int64 {
+	q := 2*n + d
+	r := q / (2 * d)
+	if q%(2*d) < 0 {
+		r--
+	}
+	return r
 }

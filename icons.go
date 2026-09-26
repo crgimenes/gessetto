@@ -38,4 +38,7 @@ var (
 	iconEllipse = loadIcon("circle")
 	iconFilled  = loadIcon("square-fill")
 	iconBoth    = loadIcon("square-half")
+	iconSelect  = loadIcon("bounding-box-circles")
+	iconClear   = loadIcon("transparency")
+	iconCurve   = loadIcon("bezier2")
 )

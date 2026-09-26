@@ -130,7 +130,6 @@ func (d *Document) EndGroup() {
 func (d *Document) RevertGroup() {
 	h := &d.hist
 	for _, e := range slices.Backward(h.group) {
-
 		putRect(d.layers[e.layer].Pix, e.rect, e.before)
 	}
 	h.group = h.group[:0]
@@ -140,6 +139,7 @@ func (d *Document) RevertGroup() {
 func (d *Document) Dirty() bool { return d.hist.cursor != d.hist.saved }
 
 func (d *Document) MarkSaved() {
+	d.Drop()
 	d.EndGroup()
 	d.hist.saved = d.hist.cursor
 }
@@ -151,7 +151,12 @@ func (d *Document) Dropped() int { return d.hist.dropped }
 func (d *Document) CanUndo() bool { return d.hist.cursor > 0 }
 func (d *Document) CanRedo() bool { return d.hist.cursor < len(d.hist.list) }
 
+// Undo with a floating selection puts its pixels back where they were.
 func (d *Document) Undo() bool {
+	if d.cancelFloat() {
+		return true
+	}
+	d.sel = nil
 	d.EndGroup()
 	if !d.CanUndo() {
 		return false
@@ -168,6 +173,7 @@ func (d *Document) Undo() bool {
 }
 
 func (d *Document) Redo() bool {
+	d.Drop()
 	d.EndGroup()
 	if !d.CanRedo() {
 		return false

@@ -78,6 +78,12 @@ func toolIcon(t tool) *ui.Icon {
 		return iconRect
 	case toolEllipse:
 		return iconEllipse
+	case toolSelect:
+		return iconSelect
+	case toolZoom:
+		return iconZoomIn
+	case toolCurve:
+		return iconCurve
 	}
 	return iconPencil
 }
@@ -110,8 +116,7 @@ func (a *app) updatePanels() {
 			a.left.SameLine()
 		}
 		if a.left.IconToggle(ui.ID(t.name), toolIcon(t.t), "", a.ed.tool == t.t) {
-			a.ed.release()
-			a.ed.tool = t.t
+			a.ed.setTool(t.t)
 		}
 	}
 	a.left.End()
@@ -159,6 +164,8 @@ func (a *app) drawSeparators(screen *ebiten.Image) {
 // toolOptions shows what the active tool can be set to, next to Undo/Redo.
 func (a *app) toolOptions() {
 	switch a.ed.tool {
+	case toolCurve:
+		a.penOptions()
 	case toolEraser:
 		a.widthSlider("eraser", &a.ed.eraser.Width)
 	case toolLine:
@@ -180,6 +187,15 @@ func (a *app) toolOptions() {
 		}
 		if a.ed.style != doc.StyleFill {
 			a.penOptions()
+		}
+	case toolSelect:
+		a.top.SameLine()
+		if a.top.IconToggle("opaque", iconFilled, "Opaque", !a.ed.clearSel) {
+			a.ed.clearSel = false
+		}
+		a.top.SameLine()
+		if a.top.IconToggle("clear", iconClear, "Transparent", a.ed.clearSel) {
+			a.ed.clearSel = true
 		}
 	case toolFill:
 		a.top.SameLine()
@@ -222,13 +238,19 @@ func toolHint(t tool) string {
 		hint := d.name + " (" + d.key + ")"
 		switch t {
 		case toolEraser:
-			return hint + ": clears pixels to transparent"
+			return hint + ": clears to transparent; right button turns only the foreground color into the background"
 		case toolPicker:
 			return hint + ": left takes the foreground, right the background"
 		case toolFill:
 			return hint + ": fills the area of one color on the active layer"
 		case toolLine, toolRect, toolEllipse:
 			return hint + ": drag; Shift keeps it straight or square"
+		case toolZoom:
+			return hint + ": click zooms in there, right click zooms out"
+		case toolCurve:
+			return hint + ": drag a line, then drag twice to bend it; Return keeps it as it is"
+		case toolSelect:
+			return hint + ": drag to select, drag inside to move (Option copies), arrows nudge, Delete clears, Esc drops"
 		}
 		return hint + ": left draws the foreground, right the background"
 	}
@@ -362,6 +384,8 @@ func (a *app) updateCanvas() {
 	right := ebiten.IsMouseButtonPressed(ebiten.MouseButtonRight)
 	space := ebiten.IsKeyPressed(ebiten.KeySpace)
 	a.ed.constrain = ebiten.IsKeyPressed(ebiten.KeyShift)
+	a.ed.duplicate = ebiten.IsKeyPressed(ebiten.KeyAlt)
+	a.ed.syncSelectionKey()
 	defer a.updateCursor(space)
 
 	switch {
@@ -388,6 +412,8 @@ func (a *app) updateCanvas() {
 		a.panFrom = p
 		a.panOrigin = a.v.origin
 		return
+	case a.ed.tool == toolZoom:
+		a.magnify(p)
 	case a.in.MouseClicked:
 		a.ed.press(a.hover, false)
 	case inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight):
@@ -395,6 +421,16 @@ func (a *app) updateCanvas() {
 	}
 	if a.overCanvas {
 		a.wheel(p)
+	}
+}
+
+// magnify is the magnifier tool: the view changes, the picture does not.
+func (a *app) magnify(p image.Point) {
+	switch {
+	case a.in.MouseClicked:
+		a.v.zoomAt(p, 1)
+	case inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonRight):
+		a.v.zoomAt(p, -1)
 	}
 }
 

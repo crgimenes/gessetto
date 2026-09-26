@@ -17,6 +17,9 @@ const (
 	toolLine
 	toolRect
 	toolEllipse
+	toolSelect
+	toolZoom
+	toolCurve
 )
 
 var tools = []struct {
@@ -31,7 +34,18 @@ var tools = []struct {
 	{toolLine, "Line", "L"},
 	{toolRect, "Rectangle", "R"},
 	{toolEllipse, "Ellipse", "O"},
+	{toolSelect, "Select", "S"},
+	{toolCurve, "Curve", "C"},
+	{toolZoom, "Magnifier", "Z"},
 }
+
+type curvePart int
+
+const (
+	curveLine curvePart = iota
+	curveBend1
+	curveBend2
+)
 
 func (t tool) shape() bool { return t == toolLine || t == toolRect || t == toolEllipse }
 
@@ -56,6 +70,25 @@ type editor struct {
 	shapeRect image.Rectangle
 	// constrain is Shift: lines snap to 45 degrees, boxes become squares.
 	constrain bool
+	// duplicate is Option/Alt: moving a selection leaves a copy behind.
+	duplicate bool
+	// clearSel is Paint's transparent selection: the background color in
+	// it lets what is below show.
+	clearSel bool
+
+	// Select tool: a marquee being dragged, or a selection being moved by
+	// the point grabbed inside it.
+	marqueeing bool
+	marquee    image.Rectangle
+	moving     bool
+	grab       image.Point
+
+	// Curve tool: stage 0 idle, 1 with the line placed, 2 bent once; the
+	// curve stays an open undo group until the second bend is released or it
+	// is committed early. curvePart is what the current drag moves.
+	curveStage int
+	curvePart  curvePart
+	curve      [4]image.Point
 
 	// changed is the part of the image to repaint on screen; full asks for
 	// all of it, after undo or a layer change.
@@ -82,6 +115,14 @@ func (e *editor) press(p image.Point, secondary bool) {
 	e.secondary = secondary
 	e.last = p
 	switch {
+	case e.tool == toolZoom:
+		return
+	case e.tool == toolCurve:
+		e.pressCurve(p)
+		return
+	case e.tool == toolSelect:
+		e.pressSelect(p)
+		return
 	case e.tool == toolPicker:
 		e.pick(p)
 		e.stroking = true
@@ -123,7 +164,12 @@ func (e *editor) strokePen() doc.Pen {
 
 func (e *editor) strokeTo(p image.Point) {
 	pen := e.strokePen()
-	_ = e.d.Line(e.last.X, e.last.Y, p.X, p.Y, e.paint(), pen) // clampCoord keeps p in range
+	if e.tool == toolEraser && e.secondary {
+		// Paint's color eraser: only the foreground color turns background.
+		_ = e.d.Recolor(e.last.X, e.last.Y, p.X, p.Y, e.fg, e.bg, pen) // clampCoord keeps p in range
+	} else {
+		_ = e.d.Line(e.last.X, e.last.Y, p.X, p.Y, e.paint(), pen) // clampCoord keeps p in range
+	}
 	r := image.Rectangle{Min: e.last, Max: p}.Canon()
 	w := pen.Width
 	e.touch(image.Rectangle{Min: r.Min.Sub(image.Pt(w, w)), Max: r.Max.Add(image.Pt(w+1, w+1))})
@@ -136,6 +182,16 @@ func (e *editor) drag(p image.Point) {
 	}
 	p = clampCoord(p)
 	if p == e.last {
+		return
+	}
+	if e.tool == toolSelect {
+		e.dragSelect(p)
+		e.last = p
+		return
+	}
+	if e.tool == toolCurve {
+		e.dragCurve(p)
+		e.last = p
 		return
 	}
 	if e.tool.shape() {
@@ -157,7 +213,176 @@ func (e *editor) release() {
 		return
 	}
 	e.stroking = false
+	switch e.tool {
+	case toolSelect:
+		e.releaseSelect()
+		return
+	case toolCurve:
+		e.releaseCurve()
+		return
+	}
 	e.d.EndGroup()
+}
+
+// syncSelectionKey hands the document the current transparency key, which
+// follows the background color as it changes.
+func (e *editor) syncSelectionKey() {
+	if !e.clearSel {
+		e.d.SetSelectionKey(nil)
+		return
+	}
+	k := e.bg
+	e.d.SetSelectionKey(&k)
+}
+
+// setTool switches tools; a selection does not outlive its tool.
+func (e *editor) setTool(t tool) {
+	e.release()
+	e.commitCurve()
+	if t != toolSelect {
+		e.drop()
+	}
+	e.tool = t
+}
+
+// Paint's curve: drag a line, then each of two drags bends it, the first
+// pulling both controls, the second only the far one.
+func (e *editor) pressCurve(p image.Point) {
+	e.stroking = true
+	switch e.curveStage {
+	case 0:
+		e.d.BeginGroup()
+		e.curve = [4]image.Point{p, p, p, p}
+		e.curveStage = 1
+		e.curvePart = curveLine
+	case 1:
+		e.curvePart = curveBend1
+	default:
+		e.curvePart = curveBend2
+	}
+	e.dragCurve(p)
+}
+
+func (e *editor) dragCurve(p image.Point) {
+	switch e.curvePart {
+	case curveLine:
+		e.curve[2], e.curve[3] = p, p
+	case curveBend1:
+		e.curve[1], e.curve[2] = p, p
+	case curveBend2:
+		e.curve[2] = p
+	}
+	e.redrawCurve()
+}
+
+func (e *editor) releaseCurve() {
+	switch e.curvePart {
+	case curveLine:
+		if e.curve[0] == e.curve[3] {
+			// A click without a line: nothing to bend.
+			e.d.RevertGroup()
+			e.d.EndGroup()
+			e.curveStage = 0
+		}
+	case curveBend1:
+		e.curveStage = 2
+	case curveBend2:
+		e.commitCurve()
+	}
+}
+
+// commitCurve keeps the curve as it is, bent or not.
+func (e *editor) commitCurve() {
+	if e.curveStage == 0 {
+		return
+	}
+	e.curveStage = 0
+	e.d.EndGroup()
+}
+
+func (e *editor) redrawCurve() {
+	e.d.RevertGroup()
+	c := e.curve
+	color := e.fg
+	if e.secondary {
+		color = e.bg
+	}
+	_ = e.d.Curve(c[0], c[1], c[2], c[3], color, e.pen) // clampCoord keeps the points in range
+	r := doc.Cover(c[:]...)
+	w := e.pen.Width
+	r = image.Rectangle{Min: r.Min.Sub(image.Pt(w, w)), Max: r.Max.Add(image.Pt(w+1, w+1))}
+	e.touch(e.shapeRect)
+	e.touch(r)
+	e.shapeRect = r
+}
+
+func (e *editor) pressSelect(p image.Point) {
+	e.stroking = true
+	r, ok := e.d.Selection()
+	if ok && p.In(r) {
+		e.moving = true
+		e.grab = p.Sub(r.Min)
+		return
+	}
+	e.drop()
+	e.marqueeing = true
+	e.anchor = p
+	e.marquee = image.Rectangle{Min: p, Max: p.Add(image.Pt(1, 1))}
+}
+
+func (e *editor) dragSelect(p image.Point) {
+	if e.marqueeing {
+		r := image.Rectangle{Min: e.anchor, Max: p}.Canon()
+		e.marquee = image.Rectangle{Min: r.Min, Max: r.Max.Add(image.Pt(1, 1))}
+		return
+	}
+	if !e.moving {
+		return
+	}
+	r, _ := e.d.Selection()
+	d := p.Sub(e.grab).Sub(r.Min)
+	e.moveSelection(d.X, d.Y)
+}
+
+func (e *editor) releaseSelect() {
+	if e.marqueeing {
+		e.marqueeing = false
+		// A click without a drag only deselects.
+		if e.marquee.Dx() > 1 || e.marquee.Dy() > 1 {
+			e.d.Select(e.marquee)
+		}
+	}
+	e.moving = false
+}
+
+func (e *editor) moveSelection(dx, dy int) {
+	r, ok := e.d.Selection()
+	if !ok || dx == 0 && dy == 0 {
+		return
+	}
+	_ = e.d.MoveSelection(dx, dy, e.duplicate) // clampCoord bounds the pointer; a move past MaxCoord is refused
+	n, _ := e.d.Selection()
+	e.touch(r)
+	e.touch(n)
+}
+
+// drop puts a floating selection down and deselects.
+func (e *editor) drop() {
+	r, ok := e.d.Selection()
+	if !ok {
+		return
+	}
+	e.d.Drop()
+	e.touch(r)
+}
+
+func (e *editor) deleteSelection() {
+	r, ok := e.d.Selection()
+	if !ok {
+		return
+	}
+	e.d.DeleteSelection()
+	e.touch(r)
 }
 
 // drawShape draws the shape from the anchor to p, repainting both where the
@@ -255,6 +480,7 @@ func (e *editor) pick(p image.Point) {
 
 func (e *editor) undo() {
 	e.release()
+	e.commitCurve()
 	if e.d.Undo() {
 		e.full = true
 	}
@@ -262,6 +488,7 @@ func (e *editor) undo() {
 
 func (e *editor) redo() {
 	e.release()
+	e.commitCurve()
 	if e.d.Redo() {
 		e.full = true
 	}

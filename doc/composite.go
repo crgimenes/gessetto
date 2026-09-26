@@ -16,9 +16,7 @@ import (
 // round(n/d) is (n + d/2) / d in integers.
 func (d *Document) Flatten() *image.NRGBA {
 	out := image.NewNRGBA(d.Bounds())
-	for _, l := range d.layers {
-		over(out.Pix, l.Pix.Pix)
-	}
+	d.FlattenInto(out, out.Rect)
 	return out
 }
 
@@ -27,27 +25,28 @@ func (d *Document) Flatten() *image.NRGBA {
 func (d *Document) FlattenInto(dst *image.NRGBA, r image.Rectangle) {
 	r = r.Intersect(d.Bounds()).Intersect(dst.Rect)
 	row := r.Dx() * 4
+	var withFloat []byte
 	for y := r.Min.Y; y < r.Max.Y; y++ {
 		o := dst.PixOffset(r.Min.X, y)
 		clear(dst.Pix[o : o+row])
-		for _, l := range d.layers {
+		for li, l := range d.layers {
 			i := l.Pix.PixOffset(r.Min.X, y)
-			over(dst.Pix[o:o+row], l.Pix.Pix[i:i+row])
+			src := l.Pix.Pix[i : i+row]
+			if d.sel != nil && d.sel.float != nil && li == d.sel.layer {
+				withFloat = append(withFloat[:0], src...)
+				d.floatRow(withFloat, li, r.Min.X, y)
+				src = withFloat
+			}
+			over(dst.Pix[o:o+row], src)
 		}
 	}
 }
 
 // PixelAt is the composited color at (x, y), what an eyedropper picks.
 func (d *Document) PixelAt(x, y int) color.NRGBA {
-	var px [4]byte
-	if !(image.Point{x, y}).In(d.Bounds()) {
-		return color.NRGBA{}
-	}
-	for _, l := range d.layers {
-		i := l.Pix.PixOffset(x, y)
-		over(px[:], l.Pix.Pix[i:i+4])
-	}
-	return color.NRGBA{R: px[0], G: px[1], B: px[2], A: px[3]}
+	out := image.NewNRGBA(image.Rect(x, y, x+1, y+1))
+	d.FlattenInto(out, out.Rect)
+	return out.NRGBAAt(x, y)
 }
 
 func over(dst, src []byte) {

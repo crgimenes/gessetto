@@ -60,6 +60,9 @@ type app struct {
 
 	perf perf
 
+	frame int
+	pinch pinch
+
 	shotPath   string
 	shotFrames int
 	shotErr    error
@@ -112,6 +115,7 @@ func (a *app) Update() error {
 		a.perf.tick()
 	}()
 	a.syncMenu()
+	a.startPinch()
 	a.menu.drain()
 	if ebiten.IsWindowBeingClosed() {
 		a.requestQuit()
@@ -131,12 +135,12 @@ func (a *app) Update() error {
 		a.updateTitle()
 		return nil
 	}
-	typing := a.top.HasFocus() || a.left.HasFocus() || a.right.HasFocus() || a.bottom.HasFocus()
-	if !typing {
+	if !a.typing() {
 		a.runShortcuts()
 		a.toolKeys()
 	}
 	a.updatePanels()
+	a.applyPinch()
 	a.updateCanvas()
 	a.updateTitle()
 	return nil
@@ -153,10 +157,10 @@ func (a *app) mergeInjected() {
 func (a *app) toolKeys() {
 	for _, t := range tools {
 		if inpututil.IsKeyJustPressed(ebiten.KeyA + ebiten.Key(t.key[0]-'A')) {
-			a.ed.release()
-			a.ed.tool = t.t
+			a.ed.setTool(t.t)
 		}
 	}
+	a.selectionKeys()
 	if inpututil.IsKeyJustPressed(ebiten.KeyX) {
 		a.ed.fg, a.ed.bg = a.ed.bg, a.ed.fg
 	}
@@ -321,7 +325,9 @@ func (a *app) Draw(screen *ebiten.Image) {
 	defer a.perf.add(&a.perf.draw, t0)
 	a.cv.sync(a.ed)
 	a.perf.add(&a.perf.sync, t0)
+	a.frame++
 	a.cv.draw(screen, a.lay.canvas, &a.v, a.grid)
+	a.drawAnts(screen)
 	if a.overCanvas && a.hover.In(a.ed.d.Bounds()) && a.v.zoom() >= footprintFrom*a.scale {
 		a.drawFootprint(screen)
 	}

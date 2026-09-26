@@ -1,0 +1,6 @@
+(doc-new 6 3)
+(doc-line 0 1 5 1 "#ff0000")
+(doc-pixel 2 1 "#0000ff")
+(doc-pixel 3 0 "#ff0000")
+(doc-pen 3 "square")
+(doc-recolor 1 1 4 1 "#ff0000" "#00ff00")
