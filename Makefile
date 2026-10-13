@@ -19,7 +19,7 @@ TIDY_CHECKS = bugprone-*,cert-*,clang-analyzer-*,readability-*,-readability-magi
 APP = build/gessetto.app
 SIM_APP = build/gessetto-sim.app
 
-.PHONY: all app run ios-sim ios-store xcframework swift-build swift-test swift-fmt editor png gessetto \
+.PHONY: all app run ios-sim ios-store ios-upload xcframework swift-build swift-test swift-fmt editor png gessetto \
 	formats corpus corpus-update fmt fmt-check tidy check freestanding qa clean
 
 all: build/gesso2c build/gesso-apply build/corpus
@@ -127,6 +127,10 @@ ios-sim: xcframework
 # The iPad app for TestFlight and the App Store; tools/ios-store.sh -h.
 ios-store: xcframework
 	tools/ios-store.sh
+
+# What ios-store made, to TestFlight; tools/ios-upload.sh -h.
+ios-upload:
+	tools/ios-upload.sh
 
 fmt:
 	$(LLVM)/clang-format -i *.c *.h

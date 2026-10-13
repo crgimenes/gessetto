@@ -55,7 +55,13 @@ struct Swatch: View {
 
 struct PalettePanel: View {
   let editor: Editor
-  private let side: CGFloat = 18
+  /// A swatch: a mouse needs little, a finger more.
+  #if os(iOS)
+    static let side: CGFloat = 24
+  #else
+    static let side: CGFloat = 18
+  #endif
+  private var side: CGFloat { PalettePanel.side }
 
   var body: some View {
     let _ = editor.revision
@@ -370,5 +376,53 @@ struct PreviewBox: View {
         step += 1
       }
     }
+  }
+}
+
+/// Tools and colors where the Pencil is, opened by its squeeze: choose
+/// without reaching for the toolbar. A choice closes it.
+struct QuickPalette: View {
+  let editor: Editor
+
+  var body: some View {
+    let _ = editor.revision
+    let sketch = editor.sketch
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(spacing: 6) {
+        ForEach(Tool.allCases) { t in
+          Button {
+            editor.tool = t
+            editor.quickPalette = nil
+          } label: {
+            Image(systemName: t.symbol)
+              .frame(width: 32, height: 32)
+              .background(
+                t == editor.tool ? Color.accentColor.opacity(0.25) : .clear,
+                in: RoundedRectangle(cornerRadius: 6))
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel(t.name)
+        }
+      }
+      LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 4), count: 8), spacing: 4) {
+        ForEach(0..<sketch.colors, id: \.self) { i in
+          Swatch(rgb: sketch.color(i), index: i)
+            .frame(width: 26, height: 26)
+            .overlay {
+              if i == editor.fg {
+                Rectangle().strokeBorder(Color.accentColor, lineWidth: 2)
+              }
+            }
+            .onTapGesture {
+              editor.setFg(i)
+              editor.quickPalette = nil
+            }
+        }
+      }
+    }
+    .padding(10)
+    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    .shadow(radius: 6)
+    .frame(width: 300, alignment: .leading)
   }
 }

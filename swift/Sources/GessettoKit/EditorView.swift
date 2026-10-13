@@ -19,10 +19,16 @@ public struct EditorView: View {
     VStack(spacing: 0) {
       HStack(spacing: 0) {
         PalettePanel(editor: editor)
-          .frame(width: 136)
+          .frame(width: PalettePanel.side * 6 + 10 + 16)
         Divider()
         CanvasView(editor: editor)
           .clipped()
+          .overlay(alignment: .topLeading) {
+            if let at = editor.quickPalette {
+              QuickPalette(editor: editor)
+                .offset(x: max(8, at.x - 120), y: max(8, at.y - 150))
+            }
+          }
       }
       Divider()
       FramesStrip(editor: editor)
@@ -232,6 +238,10 @@ struct EditorToolbar: ToolbarContent {
             editor.paletteSheet = true
           }
           Button("New Tag…", systemImage: "tag") { editor.newTag() }
+          Divider()
+          Toggle(isOn: $editor.fingerDraws) {
+            Label("Draw with Finger", systemImage: "hand.point.up.left")
+          }
         } label: {
           Label("More", systemImage: "ellipsis.circle")
         }

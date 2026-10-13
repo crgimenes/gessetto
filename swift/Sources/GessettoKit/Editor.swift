@@ -148,10 +148,27 @@ public final class Editor {
       return Tool(rawValue: Int(gst_tool_get(g).rawValue)) ?? .pencil
     }
     set {
+      let old = tool
       gst_tool_set(g, gst_tool(UInt32(newValue.rawValue)))
+      if old != newValue {
+        previousTool = old
+      }
       changed()
     }
   }
+
+  /// The tool before the last change, where the Pencil's "switch to
+  /// previous" goes.
+  var previousTool = Tool.pencil
+
+  /// Whether a finger draws on the iPad. Once a Pencil touches the canvas the
+  /// finger moves the view instead, until turned back on.
+  public var fingerDraws = true
+  static var pencilSeen = false
+
+  /// Where the Pencil asked for the quick palette (tools and colors), in the
+  /// canvas's coordinates; nil when it is closed.
+  var quickPalette: CGPoint?
 
   public var fg: Int {
     _ = revision
