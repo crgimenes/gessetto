@@ -1,0 +1,10 @@
+; Larger in both: the new pixels are index 0. Undo gives back the old
+; size, redo the new one.
+(new 2 2)
+(pixel 0 0 1)
+(pixel 1 1 2)
+(frame-add)
+(pixel 0 1 3)
+(resize 3 3)
+(undo)
+(redo)

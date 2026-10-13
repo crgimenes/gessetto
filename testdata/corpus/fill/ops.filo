@@ -1,6 +1,7 @@
-(doc-new 6 5)
-(doc-line 3 0 3 1 "#0000ff")
-(doc-line 4 2 5 2 "#0000ff")
-(doc-pixel 0 4 "#00000010")
-(doc-fill 0 0 "#ff0000" 0)
-(doc-fill 5 0 "#00ff00" 16)
+; 4-connected: the diagonal gap at (3,1)-(4,2) keeps the top right apart.
+(new 6 5)
+(line 3 0 3 1 13)
+(line 4 2 5 2 13)
+(fill 0 0 9)
+(fill 5 0 12)
+(fill 0 0 9)

@@ -1,7 +1,0 @@
-(new 4 2)
-(rect-fill 0 0 1 1 4)
-(select 0 0 1 1)
-(move-selection 2 0)
-(undo)
-(select 0 0 0 1)
-(move-selection 3 0)

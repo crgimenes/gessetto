@@ -1,0 +1,220 @@
+import CGessetto
+import CoreGraphics
+import Foundation
+
+/// What a key means on the canvas, whatever platform it came from.
+enum CanvasKey {
+  case char(Character)
+  case left, right, up, down
+  case delete, escape, enter, space
+}
+
+/// The canvas's input and drawing, the same on the Mac and the iPad; the
+/// platform views feed it points in view coordinates (top-left origin).
+@MainActor
+final class CanvasCore {
+  let editor: Editor
+  private var g: OpaquePointer { editor.sketch.g }
+  private(set) var panning = false
+  private var panFrom = CGPoint.zero
+  private var panStart = CGPoint.zero
+  private var drawing = false
+  var spaceHeld = false
+  var ants = 0
+
+  init(editor: Editor) {
+    self.editor = editor
+  }
+
+  // MARK: pointer
+
+  func press(_ p: CGPoint, secondary: Bool, pan: Bool) {
+    if pan || spaceHeld {
+      panning = true
+      panFrom = p
+      panStart = editor.pan
+      return
+    }
+    let q = editor.imagePoint(p)
+    drawing = true
+    gst_press(g, Int32(clamping: q.x), Int32(clamping: q.y), secondary ? 1 : 0)
+    editor.redraw()
+  }
+
+  func drag(_ p: CGPoint, shift: Bool, alt: Bool) {
+    if panning {
+      editor.pan = CGPoint(x: panStart.x + p.x - panFrom.x, y: panStart.y + p.y - panFrom.y)
+      editor.autoFit = false
+      editor.redraw()
+      return
+    }
+    hover(p)
+    guard drawing else { return }
+    let q = editor.imagePoint(p)
+    gst_drag(g, Int32(clamping: q.x), Int32(clamping: q.y), mods(shift, alt))
+    editor.redraw()
+  }
+
+  func release(_ p: CGPoint, shift: Bool, alt: Bool) {
+    if panning {
+      panning = false
+      return
+    }
+    guard drawing else { return }
+    drawing = false
+    let q = editor.imagePoint(p)
+    gst_release(g, Int32(clamping: q.x), Int32(clamping: q.y), mods(shift, alt))
+    editor.changed()
+  }
+
+  /// A press taken over by a gesture (two fingers): what it drew goes back.
+  func cancel() {
+    panning = false
+    guard drawing else { return }
+    drawing = false
+    gst_cancel(g)
+    editor.redraw()
+  }
+
+  func hover(_ p: CGPoint?) {
+    guard let p else {
+      editor.cursor = nil
+      return
+    }
+    let q = editor.imagePoint(p)
+    let inside = q.x >= 0 && q.y >= 0 && q.x < editor.sketch.width && q.y < editor.sketch.height
+    let shown = inside ? q : nil
+    if editor.cursor?.x != shown?.x || editor.cursor?.y != shown?.y {
+      editor.cursor = shown
+    }
+  }
+
+  private func mods(_ shift: Bool, _ alt: Bool) -> UInt32 {
+    (shift ? GST_SHIFT : 0) | (alt ? GST_ALT : 0)
+  }
+
+  /// Trackpad and wheel: the view moves under the fingers.
+  func scroll(dx: CGFloat, dy: CGFloat) {
+    editor.pan = CGPoint(x: (editor.pan.x + dx).rounded(), y: (editor.pan.y + dy).rounded())
+    editor.autoFit = false
+    editor.redraw()
+  }
+
+  private var pinch: CGFloat = 0
+
+  /// Magnification in the trackpad's units: each 0.25 is one zoom step.
+  func magnify(_ amount: CGFloat, at p: CGPoint) {
+    pinch += amount
+    while abs(pinch) >= 0.25 {
+      let dir = pinch > 0 ? 1 : -1
+      pinch -= CGFloat(dir) * 0.25
+      editor.zoom(by: dir, at: p)
+    }
+  }
+
+  func endMagnify() {
+    pinch = 0
+  }
+
+  // MARK: keys
+
+  /// Single keys while the canvas has the focus; false for any it leaves to
+  /// the system.
+  func key(_ k: CanvasKey, down: Bool, shift: Bool) -> Bool {
+    if case .space = k {
+      spaceHeld = down
+      return true
+    }
+    guard down else { return false }
+    let step = shift ? 10 : 1
+    switch k {
+    case .left: editor.moveSelection(dx: -step, dy: 0)
+    case .right: editor.moveSelection(dx: step, dy: 0)
+    case .up: editor.moveSelection(dx: 0, dy: -step)
+    case .down: editor.moveSelection(dx: 0, dy: step)
+    case .delete: editor.deleteSelection()
+    case .escape, .enter: editor.deselect()
+    case .space: break
+    case .char(let c): return char(c, shift: shift)
+    }
+    return true
+  }
+
+  private func char(_ c: Character, shift: Bool) -> Bool {
+    if shift {
+      switch c {
+      case "h": editor.flip(vertical: false)
+      case "v": editor.flip(vertical: true)
+      default: return false
+      }
+      return true
+    }
+    switch c {
+    case "x": editor.swapColors()
+    case ",": editor.step(frames: -1)
+    case ".": editor.step(frames: 1)
+    case "p": editor.playing.toggle()
+    default:
+      guard let t = Tool.allCases.first(where: { $0.key == c }) else { return false }
+      editor.tool = t
+    }
+    return true
+  }
+
+  // MARK: drawing
+
+  /// Draws into a context whose origin is the top left, y down.
+  func draw(in ctx: CGContext, size: CGSize, scale: CGFloat, background: CGColor) {
+    ctx.setFillColor(background)
+    ctx.fill(CGRect(origin: .zero, size: size))
+    let sketch = editor.sketch
+    let z = CGFloat(editor.zoom)
+    let rect = CGRect(
+      x: editor.pan.x, y: editor.pan.y, width: CGFloat(sketch.width) * z,
+      height: CGFloat(sketch.height) * z)
+    if let image = sketch.image(frame: sketch.frame, zoom: editor.zoom, onion: editor.onion) {
+      ctx.saveGState()
+      ctx.interpolationQuality = .none
+      ctx.translateBy(x: 0, y: rect.minY + rect.maxY)
+      ctx.scaleBy(x: 1, y: -1)
+      ctx.draw(image, in: rect)
+      ctx.restoreGState()
+    }
+    let hair = 1 / scale
+    if editor.grid && editor.zoom >= 4 {
+      ctx.saveGState()
+      ctx.clip(to: rect)
+      ctx.setStrokeColor(CGColor(gray: 0, alpha: 48.0 / 255))
+      ctx.setLineWidth(hair)
+      for i in 1..<sketch.width {
+        let x = rect.minX + CGFloat(i) * z + hair / 2
+        ctx.move(to: CGPoint(x: x, y: rect.minY))
+        ctx.addLine(to: CGPoint(x: x, y: rect.maxY))
+      }
+      for i in 1..<sketch.height {
+        let y = rect.minY + CGFloat(i) * z + hair / 2
+        ctx.move(to: CGPoint(x: rect.minX, y: y))
+        ctx.addLine(to: CGPoint(x: rect.maxX, y: y))
+      }
+      ctx.strokePath()
+      ctx.restoreGState()
+    }
+    switch sketch.selection {
+    case .none:
+      break
+    case .marked(let r), .floating(let r):
+      let box = CGRect(
+        x: rect.minX + r.minX * z, y: rect.minY + r.minY * z, width: r.width * z,
+        height: r.height * z
+      ).insetBy(dx: hair / 2, dy: hair / 2)
+      ctx.setLineWidth(hair)
+      ctx.setStrokeColor(CGColor(gray: 1, alpha: 1))
+      ctx.stroke(box)
+      ctx.setStrokeColor(CGColor(gray: 0, alpha: 1))
+      ctx.setLineDash(
+        phase: CGFloat(ants) * 2 * hair, lengths: [4 * hair * scale, 4 * hair * scale])
+      ctx.stroke(box)
+      ctx.setLineDash(phase: 0, lengths: [])
+    }
+  }
+}

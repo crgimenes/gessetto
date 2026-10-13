@@ -1,0 +1,7 @@
+; Wider and shorter: each frame keeps its top left, the rest is cut.
+(new 3 2)
+(pixel 0 0 1)
+(pixel 2 1 2)
+(frame-add)
+(pixel 1 0 3)
+(resize 4 1)

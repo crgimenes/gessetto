@@ -1,8 +1,0 @@
-; Index 0 in a transparent floating selection shows what is under it.
-(new 6 3)
-(rect-fill 3 0 5 2 13)
-(pixel 1 1 9)
-(selection-transparent #t)
-(select 0 0 2 2)
-(duplicate-selection 3 0)
-(drop)
