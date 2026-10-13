@@ -19,7 +19,7 @@ TIDY_CHECKS = bugprone-*,cert-*,clang-analyzer-*,readability-*,-readability-magi
 APP = build/gessetto.app
 SIM_APP = build/gessetto-sim.app
 
-.PHONY: all app run ios-sim ios-store ios-upload xcframework swift-build swift-test swift-fmt editor png gessetto \
+.PHONY: all app run mac-store ios-sim ios-store ios-upload xcframework swift-build swift-test swift-fmt editor png gessetto \
 	formats corpus corpus-update fmt fmt-check tidy check freestanding qa clean
 
 all: build/gesso2c build/gesso-apply build/corpus
@@ -90,22 +90,29 @@ swift-build: xcframework
 swift-test: xcframework
 	cd swift && swift test
 
-# Local bundle, ad-hoc signed.
+MAC_ARCHS = --arch arm64 --arch x86_64
+
+# Local bundle, universal, sandboxed as in the store, ad-hoc signed.
 app: xcframework
-	cd swift && swift build -c release -Xswiftc -warnings-as-errors
+	cd swift && swift build -c release $(MAC_ARCHS) -Xswiftc -warnings-as-errors
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
-	cp "$$(cd swift && swift build -c release --show-bin-path)/gessetto" $(APP)/Contents/MacOS/
+	cp "$$(cd swift && swift build -c release $(MAC_ARCHS) --show-bin-path)/gessetto" $(APP)/Contents/MacOS/
 	cp assets/Info.plist $(APP)/Contents/Info.plist
 	xcrun actool assets/gessetto.icon --compile $(APP)/Contents/Resources --platform macosx \
 		--minimum-deployment-target 14.0 --target-device mac --app-icon gessetto \
 		--output-partial-info-plist build/icon-mac.plist --output-format human-readable-text >/dev/null
 	/usr/libexec/PlistBuddy -c "Merge build/icon-mac.plist" $(APP)/Contents/Info.plist
+	cp assets/PrivacyInfo.xcprivacy $(APP)/Contents/Resources/
 	plutil -lint $(APP)/Contents/Info.plist
-	codesign --force --sign - $(APP)
+	codesign --force --sign - --entitlements assets/gessetto.entitlements $(APP)
 
 run: app
 	open $(APP)
+
+# The Mac app to TestFlight and the Mac App Store; tools/mac-store.sh -h.
+mac-store: app
+	tools/mac-store.sh
 
 # The same app for the iPad simulator; documents through the system's
 # browser (Files, iCloud Drive).

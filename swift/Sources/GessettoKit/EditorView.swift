@@ -86,6 +86,17 @@ public struct EditorView: View {
       }
     }
     .alert(
+      "Text",
+      isPresented: Binding(
+        get: { editor.textAt != nil }, set: { if !$0 { editor.textAt = nil } })
+    ) {
+      TextField("Text", text: $editor.textEntry)
+      Button("Place") { editor.placeText() }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("In the built-in 5×9 font, in the foreground color.")
+    }
+    .alert(
       "gessetto",
       isPresented: Binding(get: { editor.error != nil }, set: { _ in editor.error = nil })
     ) {
@@ -184,9 +195,30 @@ struct EditorToolbar: ToolbarContent {
       switch editor.tool {
       case .pencil:
         toggle("Pixel Perfect", "square.grid.3x3.middle.filled", $editor.pixelPerfect)
-      case .rect, .ellipse:
+      case .rect:
         toggle("Filled", "square.fill", $editor.filled)
-      case .select:
+        Menu {
+          Picker("Corner Radius", selection: $editor.cornerRadius) {
+            ForEach(0...16, id: \.self) { Text(verbatim: $0 == 0 ? "Square" : "\($0) px").tag($0) }
+          }
+        } label: {
+          Label("Corners \(editor.cornerRadius)", systemImage: "app")
+        }
+        .help("Corner radius")
+      case .ellipse, .polygon:
+        toggle("Filled", "square.fill", $editor.filled)
+      case .spray:
+        Menu {
+          Picker("Spray Radius", selection: $editor.sprayRadius) {
+            ForEach([1, 2, 3, 4, 6, 8, 12, 16, 24, 32], id: \.self) {
+              Text(verbatim: "\($0) px").tag($0)
+            }
+          }
+        } label: {
+          Label("Spray \(editor.sprayRadius) px", systemImage: "circle.dotted")
+        }
+        .help("Spray radius")
+      case .select, .lasso, .text:
         toggle("Transparent", "checkerboard.rectangle", $editor.transparentSelection)
         Button("Flip Horizontal", systemImage: "arrow.left.and.right") {
           editor.flip(vertical: false)
@@ -212,7 +244,7 @@ struct EditorToolbar: ToolbarContent {
         }
         .help("Pen size and shape (- and = change the size)")
       }
-      if editor.tool != .select && editor.tool != .picker {
+      if ![.select, .lasso, .text, .picker].contains(editor.tool) {
         toggle(
           "Mirror X", "arrow.left.and.right.righttriangle.left.righttriangle.right", $editor.mirrorX
         )

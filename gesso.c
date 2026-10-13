@@ -367,6 +367,7 @@ static void reset(gesso_doc *d) {
     d->frame = 0;
     d->selected = 0;
     d->floating = 0;
+    d->lassoing = 0;
     d->transparent = 0;
     d->top = 0;
     d->end = 0;
@@ -522,8 +523,7 @@ uint8_t gesso_view(const gesso_doc *d, int32_t x, int32_t y) {
     if (img->nframes == 0 || x < 0 || y < 0 || x >= img->width || y >= img->height) {
         return 0;
     }
-    if (d->floating && x >= d->sel.x && y >= d->sel.y && x < d->sel.x + d->sel.w &&
-        y < d->sel.y + d->sel.h) {
+    if (d->floating && gesso_selected(d, x, y)) {
         uint8_t v =
             d->lifted.pixels[(size_t)(y - d->sel.y) * (size_t)d->lifted.w + (size_t)(x - d->sel.x)];
         if (v != 0 || !d->transparent) {
@@ -597,6 +597,359 @@ gesso_status gesso_rect_draw(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, i
         for (int32_t x = box.x; x <= right; x++) {
             dab(d, x, y, c);
         }
+    }
+    pixel_end(d, e);
+    return GESSO_OK;
+}
+
+/* Where the edge (x0, y0)-(x1, y1) crosses the middle of row y, times 2,
+   rounded down: the crossing is x0 + (y + 1/2 - y0) (x1 - x0) / (y1 - y0). */
+static int64_t crossing2(int64_t x0, int64_t y0, int64_t x1, int64_t y1, int64_t y) {
+    int64_t num = (2 * y + 1 - 2 * y0) * (x1 - x0);
+    int64_t den = y1 - y0;
+    int64_t q = num / den;
+    if ((num % den != 0) && ((num < 0) != (den < 0))) {
+        q--;
+    }
+    return 2 * x0 + q;
+}
+
+gesso_status gesso_polygon(gesso_doc *d, const int32_t *xs, const int32_t *ys, uint32_t n,
+                           uint8_t c, int filled) {
+    if (n < 3 || n > GESSO_POLYGON_MAX) {
+        return GESSO_ERR_COORD;
+    }
+    gesso_rect box = {xs[0], ys[0], 1, 1};
+    for (uint32_t i = 0; i < n; i++) {
+        gesso_status st = check(d, c, xs[i], ys[i], xs[i], ys[i]);
+        if (st != GESSO_OK) {
+            return st;
+        }
+        int32_t right = box.x + box.w - 1;
+        int32_t bottom = box.y + box.h - 1;
+        box.x = xs[i] < box.x ? xs[i] : box.x;
+        box.y = ys[i] < box.y ? ys[i] : box.y;
+        right = xs[i] > right ? xs[i] : right;
+        bottom = ys[i] > bottom ? ys[i] : bottom;
+        box.w = right - box.x + 1;
+        box.h = bottom - box.y + 1;
+    }
+    gesso_drop(d);
+    gesso_rect cl = clip(d, reach(d, box));
+    if (cl.w == 0) {
+        return GESSO_OK;
+    }
+    pixel_edit e = pixel_begin(d, cl);
+    if (filled) {
+        int32_t y0 = cl.y > box.y ? cl.y : box.y;
+        int32_t y1 = cl.y + cl.h < box.y + box.h ? cl.y + cl.h : box.y + box.h;
+        for (int32_t y = y0; y < y1; y++) {
+            int64_t xc[GESSO_POLYGON_MAX];
+            uint32_t k = 0;
+            for (uint32_t i = 0; i < n; i++) {
+                uint32_t j = (i + 1) % n;
+                int32_t ya = ys[i] < ys[j] ? ys[i] : ys[j];
+                int32_t yb = ys[i] < ys[j] ? ys[j] : ys[i];
+                /* Half-open in y, so a vertex between two edges counts once. */
+                if (ys[i] == ys[j] || y < ya || y >= yb) {
+                    continue;
+                }
+                int64_t x2 = crossing2(xs[i], ys[i], xs[j], ys[j], y);
+                uint32_t m = k++;
+                while (m > 0 && xc[m - 1] > x2) {
+                    xc[m] = xc[m - 1];
+                    m--;
+                }
+                xc[m] = x2;
+            }
+            /* Pixel x is inside when its center, 2x + 1 doubled, is. */
+            for (uint32_t p = 0; p + 1 < k; p += 2) {
+                int64_t from = xc[p] / 2 - 1;
+                for (int64_t x = from; x <= xc[p + 1] / 2 + 1; x++) {
+                    if (2 * x + 1 >= xc[p] && 2 * x + 1 <= xc[p + 1]) {
+                        plot(d, (int32_t)x, y, c);
+                    }
+                }
+            }
+        }
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t j = (i + 1) % n;
+        int32_t x = xs[i];
+        int32_t y = ys[i];
+        int32_t dx = xs[j] > x ? xs[j] - x : x - xs[j];
+        int32_t dy = ys[j] > y ? y - ys[j] : ys[j] - y;
+        int32_t sx = x < xs[j] ? 1 : -1;
+        int32_t sy = y < ys[j] ? 1 : -1;
+        int32_t err = dx + dy;
+        for (;;) {
+            dab(d, x, y, c);
+            if (x == xs[j] && y == ys[j]) {
+                break;
+            }
+            int32_t e2 = 2 * err;
+            if (e2 >= dy) {
+                err += dy;
+                x += sx;
+            }
+            if (e2 <= dx) {
+                err += dx;
+                y += sy;
+            }
+        }
+    }
+    pixel_end(d, e);
+    return GESSO_OK;
+}
+
+static int64_t iabs64(int64_t v) {
+    return v < 0 ? -v : v;
+}
+
+static int64_t floor_div(int64_t a, int64_t b) {
+    int64_t q = a / b;
+    if ((a % b != 0) && ((a < 0) != (b < 0))) {
+        q--;
+    }
+    return q;
+}
+
+/* The point at step i of n on the quadratic Bezier, rounded to the nearest
+   pixel: ((n-i)^2 p0 + 2 i (n-i) c + i^2 p1) / n^2. */
+static int32_t bezier(int64_t p0, int64_t c, int64_t p1, int64_t i, int64_t n) {
+    int64_t num = (n - i) * (n - i) * p0 + 2 * i * (n - i) * c + i * i * p1;
+    return (int32_t)floor_div(2 * num + n * n, 2 * n * n);
+}
+
+/* The point packed in 32 bits for the path buffer (coordinates are within
+   GESSO_COORD_MAX of 0). */
+static uint32_t pack(int32_t x, int32_t y) {
+    return (uint32_t)(x + GESSO_COORD_MAX) << 16u | (uint32_t)(y + GESSO_COORD_MAX);
+}
+
+static int32_t unpack_x(uint32_t p) {
+    return (int32_t)(p >> 16u) - GESSO_COORD_MAX;
+}
+
+static int32_t unpack_y(uint32_t p) {
+    return (int32_t)(p & 0xffffu) - GESSO_COORD_MAX;
+}
+
+/* Whether a and b are diagonal neighbours: the pixel between them in the
+   path is the corner of an L. */
+static int l_corner(uint32_t a, uint32_t b) {
+    int32_t dx = unpack_x(a) - unpack_x(b);
+    int32_t dy = unpack_y(a) - unpack_y(b);
+    return (dx == 1 || dx == -1) && (dy == 1 || dy == -1);
+}
+
+/* Steps dense enough that consecutive points touch, joined by Bresenham so
+   the stroke has no gaps, then made pixel-perfect: the middle of an L
+   corner (its ends diagonal neighbours) goes. The path lives in the doc's
+   stack; one too long for it is drawn as walked, uncleaned. */
+gesso_status gesso_curve(gesso_doc *d, int32_t x0, int32_t y0, int32_t cx, int32_t cy, int32_t x1,
+                         int32_t y1, uint8_t c) {
+    gesso_status st = check(d, c, x0, y0, x1, y1);
+    if (st == GESSO_OK) {
+        st = check(d, c, cx, cy, cx, cy);
+    }
+    if (st != GESSO_OK) {
+        return st;
+    }
+    gesso_rect box = corners(x0, y0, x1, y1);
+    gesso_rect cb = corners(cx, cy, cx, cy);
+    int32_t left = box.x < cb.x ? box.x : cb.x;
+    int32_t top = box.y < cb.y ? box.y : cb.y;
+    int32_t right = box.x + box.w > cb.x + 1 ? box.x + box.w : cb.x + 1;
+    int32_t bottom = box.y + box.h > cb.y + 1 ? box.y + box.h : cb.y + 1;
+    gesso_drop(d);
+    gesso_rect cl = clip(d, reach(d, (gesso_rect){left, top, right - left, bottom - top}));
+    if (cl.w == 0) {
+        return GESSO_OK;
+    }
+    pixel_edit e = pixel_begin(d, cl);
+    int64_t spanx = iabs64((int64_t)cx - x0) + iabs64((int64_t)x1 - cx);
+    int64_t spany = iabs64((int64_t)cy - y0) + iabs64((int64_t)y1 - cy);
+    int64_t n = 2 * (spanx > spany ? spanx : spany) + 1;
+    const size_t cap = sizeof d->stack / sizeof d->stack[0];
+    size_t len = 0;
+    int whole = 1;
+    int32_t px = x0;
+    int32_t py = y0;
+    d->stack[len++] = pack(px, py);
+    for (int64_t i = 1; i <= n; i++) {
+        int32_t qx = bezier(x0, cx, x1, i, n);
+        int32_t qy = bezier(y0, cy, y1, i, n);
+        int32_t dx = qx > px ? qx - px : px - qx;
+        int32_t dy = qy > py ? py - qy : qy - py;
+        int32_t sx = px < qx ? 1 : -1;
+        int32_t sy = py < qy ? 1 : -1;
+        int32_t err = dx + dy;
+        while (px != qx || py != qy) {
+            int32_t e2 = 2 * err;
+            if (e2 >= dy) {
+                err += dy;
+                px += sx;
+            }
+            if (e2 <= dx) {
+                err += dx;
+                py += sy;
+            }
+            if (len < cap) {
+                d->stack[len++] = pack(px, py);
+            } else {
+                whole = 0;
+                dab(d, px, py, c);
+            }
+        }
+    }
+    /* From each end toward the middle, each against the last pixel it
+       kept (two corners in a row must not open a gap): a symmetric curve
+       stays symmetric. The flags live in the doc's scratch. */
+    uint8_t *keep = d->scratch.pixels;
+    if (whole && len > 2 && len <= sizeof d->scratch.pixels) {
+        memset(keep, 1, len);
+        size_t mid = len / 2;
+        uint32_t kept = d->stack[0];
+        for (size_t k = 1; k < mid; k++) {
+            if (l_corner(kept, d->stack[k + 1])) {
+                keep[k] = 0;
+            } else {
+                kept = d->stack[k];
+            }
+        }
+        uint32_t front = kept;
+        kept = d->stack[len - 1];
+        for (size_t k = len - 2; k >= mid && k > 0; k--) {
+            uint32_t ahead = k == mid ? front : d->stack[k - 1];
+            if (l_corner(kept, ahead)) {
+                keep[k] = 0;
+            } else {
+                kept = d->stack[k];
+            }
+        }
+    } else {
+        memset(keep, 1, len < sizeof d->scratch.pixels ? len : sizeof d->scratch.pixels);
+    }
+    for (size_t k = 0; k < len; k++) {
+        if (k >= sizeof d->scratch.pixels || keep[k]) {
+            dab(d, unpack_x(d->stack[k]), unpack_y(d->stack[k]), c);
+        }
+    }
+    pixel_end(d, e);
+    return GESSO_OK;
+}
+
+/* count dots inside the circle of radius r around (x, y), placed by
+   xorshift32 from seed: the same seed always gives the same dots. */
+gesso_status gesso_spray(gesso_doc *d, int32_t x, int32_t y, int32_t r, uint32_t count,
+                         uint32_t seed, uint8_t c) {
+    gesso_status st = check(d, c, x, y, x, y);
+    if (st != GESSO_OK) {
+        return st;
+    }
+    r = r < 0 ? 0 : r;
+    if (r > GESSO_SIDE_MAX) {
+        r = GESSO_SIDE_MAX;
+    }
+    gesso_drop(d);
+    gesso_rect cl = clip(d, (gesso_rect){x - r, y - r, 2 * r + 1, 2 * r + 1});
+    if (cl.w == 0) {
+        return GESSO_OK;
+    }
+    pixel_edit e = pixel_begin(d, cl);
+    uint32_t s = seed != 0 ? seed : 1;
+    uint32_t side = (uint32_t)(2 * r + 1);
+    for (uint32_t i = 0, tries = 0; i < count && tries < 4 * count + 4; tries++) {
+        s ^= s << 13u;
+        s ^= s >> 17u;
+        s ^= s << 5u;
+        int32_t dx = (int32_t)(s % side) - r;
+        int32_t dy = (int32_t)((s / side) % side) - r;
+        if (dx * dx + dy * dy > r * r) {
+            continue;
+        }
+        plot(d, x + dx, y + dy, c);
+        i++;
+    }
+    pixel_end(d, e);
+    return GESSO_OK;
+}
+
+/* The corners are quarters of a midpoint circle of radius r: ext[dy] is
+   how far the arc reaches sideways dy rows from its center, the same for
+   the outline and the fill, so they always agree. */
+gesso_status gesso_rect_round(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, int32_t y1,
+                              int32_t r, uint8_t c, int filled) {
+    gesso_status st = check(d, c, x0, y0, x1, y1);
+    if (st != GESSO_OK) {
+        return st;
+    }
+    gesso_rect box = corners(x0, y0, x1, y1);
+    int32_t most = (box.w < box.h ? box.w : box.h) - 1;
+    r = r < 0 ? 0 : r;
+    r = r > most / 2 ? most / 2 : r;
+    if (r > GESSO_SIDE_MAX - 1) {
+        r = GESSO_SIDE_MAX - 1;
+    }
+    if (r == 0) {
+        return gesso_rect_draw(d, x0, y0, x1, y1, c, filled);
+    }
+    gesso_drop(d);
+    gesso_rect cl = clip(d, filled ? box : reach(d, box));
+    if (cl.w == 0) {
+        return GESSO_OK;
+    }
+    pixel_edit e = pixel_begin(d, cl);
+    int32_t ext[GESSO_SIDE_MAX] = {0};
+    int32_t px[4 * GESSO_SIDE_MAX];
+    int32_t py[4 * GESSO_SIDE_MAX];
+    int32_t n = 0;
+    for (int32_t x = r, y = 0, err = 1 - r; x >= y;) {
+        px[n] = x;
+        py[n++] = y;
+        px[n] = y;
+        py[n++] = x;
+        ext[y] = ext[y] > x ? ext[y] : x;
+        ext[x] = ext[x] > y ? ext[x] : y;
+        y++;
+        if (err < 0) {
+            err += 2 * y + 1;
+        } else {
+            x--;
+            err += 2 * (y - x) + 1;
+        }
+    }
+    int32_t left = box.x + r;
+    int32_t right = box.x + box.w - 1 - r;
+    int32_t top = box.y + r;
+    int32_t bottom = box.y + box.h - 1 - r;
+    if (filled) {
+        for (int32_t y = box.y; y < box.y + box.h; y++) {
+            int32_t dy = 0;
+            if (y < top) {
+                dy = top - y;
+            } else if (y > bottom) {
+                dy = y - bottom;
+            }
+            span(d, left - ext[dy], right + ext[dy], y, c, 1);
+        }
+        pixel_end(d, e);
+        return GESSO_OK;
+    }
+    for (int32_t i = 0; i < n; i++) {
+        dab(d, left - px[i], top - py[i], c);
+        dab(d, right + px[i], top - py[i], c);
+        dab(d, left - px[i], bottom + py[i], c);
+        dab(d, right + px[i], bottom + py[i], c);
+    }
+    for (int32_t x = left; x <= right; x++) {
+        dab(d, x, box.y, c);
+        dab(d, x, box.y + box.h - 1, c);
+    }
+    for (int32_t y = top; y <= bottom; y++) {
+        dab(d, box.x, y, c);
+        dab(d, box.x + box.w - 1, y, c);
     }
     pixel_end(d, e);
     return GESSO_OK;
@@ -724,13 +1077,166 @@ gesso_status gesso_select(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, int3
     }
     d->sel = r;
     d->selected = 1;
+    d->masked = 0;
     return GESSO_OK;
 }
 
-static void clear_rect(gesso_doc *d, gesso_rect r) {
+/* (x, y) inside the selection rectangle. */
+static int in_mask(const gesso_doc *d, int32_t x, int32_t y) {
+    return !d->masked ||
+           d->mask.pixels[(size_t)(y - d->sel.y) * (size_t)d->sel.w + (size_t)(x - d->sel.x)];
+}
+
+int gesso_selected(const gesso_doc *d, int32_t x, int32_t y) {
+    if (!d->selected || x < d->sel.x || y < d->sel.y || x >= d->sel.x + d->sel.w ||
+        y >= d->sel.y + d->sel.h) {
+        return 0;
+    }
+    return in_mask(d, x, y);
+}
+
+/* v pulled into 0..n-1. */
+static int32_t pull(int32_t v, int32_t n) {
+    if (v < 0) {
+        return 0;
+    }
+    return v < n ? v : n - 1;
+}
+
+static void lasso_mark(gesso_doc *d, int32_t x, int32_t y) {
+    int32_t w = d->img.width;
+    x = pull(x, w);
+    y = pull(y, d->img.height);
+    int32_t dx = x > d->lasso_x ? x - d->lasso_x : d->lasso_x - x;
+    int32_t dy = y > d->lasso_y ? d->lasso_y - y : y - d->lasso_y;
+    int32_t sx = d->lasso_x < x ? 1 : -1;
+    int32_t sy = d->lasso_y < y ? 1 : -1;
+    int32_t err = dx + dy;
+    for (;;) {
+        d->mask.pixels[(size_t)d->lasso_y * (size_t)w + (size_t)d->lasso_x] = 1;
+        if (d->lasso_x == x && d->lasso_y == y) {
+            return;
+        }
+        int32_t e2 = 2 * err;
+        if (e2 >= dy) {
+            err += dy;
+            d->lasso_x += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            d->lasso_y += sy;
+        }
+    }
+}
+
+gesso_status gesso_lasso_begin(gesso_doc *d, int32_t x, int32_t y) {
+    gesso_status st = check(d, 0, x, y, x, y);
+    if (st != GESSO_OK) {
+        return st;
+    }
+    gesso_drop(d);
+    memset(d->mask.pixels, 0, frame_size(&d->img));
+    d->lassoing = 1;
+    d->lasso_x = pull(x, d->img.width);
+    d->lasso_y = pull(y, d->img.height);
+    d->lasso_x0 = d->lasso_x;
+    d->lasso_y0 = d->lasso_y;
+    lasso_mark(d, x, y);
+    return GESSO_OK;
+}
+
+gesso_status gesso_lasso_to(gesso_doc *d, int32_t x, int32_t y) {
+    gesso_status st = check(d, 0, x, y, x, y);
+    if (st != GESSO_OK || !d->lassoing) {
+        return st;
+    }
+    lasso_mark(d, x, y);
+    return GESSO_OK;
+}
+
+/* Floods the outside in from the edges, 4-connected so it cannot slip
+   between the diagonal steps of the 8-connected path; the rest is inside,
+   and the mask shrinks to its bounding box in place, each row landing at or
+   before where it was read. */
+void gesso_lasso_end(gesso_doc *d) {
+    if (!d->lassoing) {
+        return;
+    }
+    d->lassoing = 0;
+    lasso_mark(d, d->lasso_x0, d->lasso_y0);
+    uint8_t *m = d->mask.pixels;
+    uint32_t w = (uint32_t)d->img.width;
+    uint32_t h = (uint32_t)d->img.height;
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < w * h; i++) {
+        uint32_t px = i % w;
+        uint32_t py = i / w;
+        if ((px == 0 || py == 0 || px + 1 == w || py + 1 == h) && m[i] == 0) {
+            m[i] = 2;
+            d->stack[n++] = i;
+        }
+    }
+    while (n > 0) {
+        uint32_t i = d->stack[--n];
+        uint32_t px = i % w;
+        uint32_t py = i / w;
+        uint32_t next[4];
+        uint32_t k = 0;
+        if (px > 0) {
+            next[k++] = i - 1;
+        }
+        if (px + 1 < w) {
+            next[k++] = i + 1;
+        }
+        if (py > 0) {
+            next[k++] = i - w;
+        }
+        if (py + 1 < h) {
+            next[k++] = i + w;
+        }
+        for (uint32_t j = 0; j < k; j++) {
+            if (m[next[j]] == 0) {
+                m[next[j]] = 2;
+                d->stack[n++] = next[j];
+            }
+        }
+    }
+    int32_t x0 = (int32_t)w;
+    int32_t y0 = (int32_t)h;
+    int32_t x1 = -1;
+    int32_t y1 = -1;
+    for (uint32_t i = 0; i < w * h; i++) {
+        if (m[i] == 2) {
+            continue;
+        }
+        int32_t px = (int32_t)(i % w);
+        int32_t py = (int32_t)(i / w);
+        x0 = px < x0 ? px : x0;
+        y0 = py < y0 ? py : y0;
+        x1 = px > x1 ? px : x1;
+        y1 = py > y1 ? py : y1;
+    }
+    d->sel = (gesso_rect){x0, y0, x1 - x0 + 1, y1 - y0 + 1};
+    size_t k = 0;
+    for (int32_t y = y0; y <= y1; y++) {
+        for (int32_t x = x0; x <= x1; x++) {
+            m[k++] = m[(size_t)y * w + (size_t)x] != 2;
+        }
+    }
+    d->mask.w = d->sel.w;
+    d->mask.h = d->sel.h;
+    d->selected = 1;
+    d->masked = 1;
+}
+
+static void clear_selection(gesso_doc *d) {
     uint8_t *f = gesso_frame_pixels(&d->img, d->frame);
-    for (int32_t y = 0; y < r.h; y++) {
-        memset(f + (size_t)(r.y + y) * (size_t)d->img.width + (size_t)r.x, 0, (size_t)r.w);
+    for (int32_t y = d->sel.y; y < d->sel.y + d->sel.h; y++) {
+        for (int32_t x = d->sel.x; x < d->sel.x + d->sel.w; x++) {
+            if (in_mask(d, x, y)) {
+                f[(size_t)y * (size_t)d->img.width + (size_t)x] = 0;
+            }
+        }
     }
 }
 
@@ -745,7 +1251,7 @@ static void lift(gesso_doc *d, int duplicate) {
         return;
     }
     pixel_edit e = pixel_begin(d, d->sel);
-    clear_rect(d, d->sel);
+    clear_selection(d);
     pixel_end(d, e);
 }
 
@@ -789,6 +1295,7 @@ static gesso_status float_all(gesso_doc *d) {
     if (!d->selected) {
         d->sel = (gesso_rect){0, 0, d->img.width, d->img.height};
         d->selected = 1;
+        d->masked = 0;
     }
     if (!d->floating) {
         lift(d, 0);
@@ -796,12 +1303,7 @@ static gesso_status float_all(gesso_doc *d) {
     return GESSO_OK;
 }
 
-gesso_status gesso_flip(gesso_doc *d, int vertical) {
-    gesso_status st = float_all(d);
-    if (st != GESSO_OK) {
-        return st;
-    }
-    gesso_patch *p = &d->lifted;
+static void flip_patch(gesso_patch *p, int vertical) {
     if (vertical) {
         for (int32_t y = 0; y < p->h / 2; y++) {
             uint8_t *a = p->pixels + (size_t)y * (size_t)p->w;
@@ -812,7 +1314,7 @@ gesso_status gesso_flip(gesso_doc *d, int vertical) {
                 b[x] = t;
             }
         }
-        return GESSO_OK;
+        return;
     }
     for (int32_t y = 0; y < p->h; y++) {
         uint8_t *row = p->pixels + (size_t)y * (size_t)p->w;
@@ -822,7 +1324,32 @@ gesso_status gesso_flip(gesso_doc *d, int vertical) {
             row[p->w - 1 - x] = t;
         }
     }
+}
+
+gesso_status gesso_flip(gesso_doc *d, int vertical) {
+    gesso_status st = float_all(d);
+    if (st != GESSO_OK) {
+        return st;
+    }
+    flip_patch(&d->lifted, vertical);
+    if (d->masked) {
+        flip_patch(&d->mask, vertical);
+    }
     return GESSO_OK;
+}
+
+static void rotate_patch(gesso_patch *p, gesso_patch *t) {
+    t->w = p->h;
+    t->h = p->w;
+    for (int32_t ny = 0; ny < t->h; ny++) {
+        for (int32_t nx = 0; nx < t->w; nx++) {
+            t->pixels[(size_t)ny * (size_t)t->w + (size_t)nx] =
+                p->pixels[(size_t)(p->h - 1 - nx) * (size_t)p->w + (size_t)ny];
+        }
+    }
+    memcpy(p->pixels, t->pixels, (size_t)t->w * (size_t)t->h);
+    p->w = t->w;
+    p->h = t->h;
 }
 
 /* Clockwise, about the center: the rectangle keeps its middle, rounded the
@@ -833,26 +1360,19 @@ gesso_status gesso_rotate(gesso_doc *d) {
         return st;
     }
     gesso_patch *p = &d->lifted;
-    gesso_patch *t = &d->scratch;
-    t->w = p->h;
-    t->h = p->w;
-    for (int32_t ny = 0; ny < t->h; ny++) {
-        for (int32_t nx = 0; nx < t->w; nx++) {
-            t->pixels[(size_t)ny * (size_t)t->w + (size_t)nx] =
-                p->pixels[(size_t)(p->h - 1 - nx) * (size_t)p->w + (size_t)ny];
-        }
-    }
     d->sel.x += (p->w - p->h) / 2;
     d->sel.y += (p->h - p->w) / 2;
-    memcpy(p->pixels, t->pixels, (size_t)t->w * (size_t)t->h);
-    p->w = t->w;
-    p->h = t->h;
+    rotate_patch(p, &d->scratch);
+    if (d->masked) {
+        rotate_patch(&d->mask, &d->scratch);
+    }
     d->sel.w = p->w;
     d->sel.h = p->h;
     return GESSO_OK;
 }
 
 void gesso_drop(gesso_doc *d) {
+    d->lassoing = 0;
     if (!d->selected) {
         return;
     }
@@ -869,7 +1389,7 @@ void gesso_drop(gesso_doc *d) {
             for (int32_t x = r.x; x < r.x + r.w; x++) {
                 uint8_t v = d->lifted.pixels[(size_t)(y - d->sel.y) * (size_t)d->lifted.w +
                                              (size_t)(x - d->sel.x)];
-                if (v == 0 && d->transparent) {
+                if ((v == 0 && d->transparent) || !in_mask(d, x, y)) {
                     continue;
                 }
                 f[(size_t)y * (size_t)d->img.width + (size_t)x] = v;
@@ -891,7 +1411,7 @@ gesso_status gesso_delete_selection(gesso_doc *d) {
         return GESSO_OK;
     }
     pixel_edit e = pixel_begin(d, d->sel);
-    clear_rect(d, d->sel);
+    clear_selection(d);
     pixel_end(d, e);
     return GESSO_OK;
 }
@@ -902,13 +1422,17 @@ gesso_status gesso_copy(gesso_doc *d) {
     }
     if (d->floating) {
         memcpy(d->clip.pixels, d->lifted.pixels, (size_t)d->lifted.w * (size_t)d->lifted.h);
-        d->clip.w = d->lifted.w;
-        d->clip.h = d->lifted.h;
-        return GESSO_OK;
+    } else {
+        copy_out(&d->img, d->frame, d->sel, d->clip.pixels);
     }
-    copy_out(&d->img, d->frame, d->sel, d->clip.pixels);
     d->clip.w = d->sel.w;
     d->clip.h = d->sel.h;
+    /* The clipboard has no mask: what the lasso left out is index 0. */
+    for (size_t i = 0; d->masked && i < (size_t)d->sel.w * (size_t)d->sel.h; i++) {
+        if (!d->mask.pixels[i]) {
+            d->clip.pixels[i] = 0;
+        }
+    }
     return GESSO_OK;
 }
 
@@ -937,6 +1461,177 @@ gesso_status gesso_paste(gesso_doc *d, int32_t x, int32_t y) {
     d->lifted.h = d->clip.h;
     d->sel = (gesso_rect){x, y, d->clip.w, d->clip.h};
     d->selected = 1;
+    d->masked = 0;
+    d->floating = 1;
+    gesso_begin(d);
+    d->float_group = d->group;
+    return GESSO_OK;
+}
+
+/* ASCII 32 to 126, a row a byte, the leftmost pixel in bit 4. */
+static const uint8_t font[95][9] = {
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, /*   */
+    {0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x04, 0x00, 0x00}, /* ! */
+    {0x0a, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, /* " */
+    {0x0a, 0x0a, 0x1f, 0x0a, 0x1f, 0x0a, 0x0a, 0x00, 0x00}, /* # */
+    {0x04, 0x0f, 0x14, 0x0e, 0x05, 0x1e, 0x04, 0x00, 0x00}, /* $ */
+    {0x18, 0x19, 0x02, 0x04, 0x08, 0x13, 0x03, 0x00, 0x00}, /* % */
+    {0x0c, 0x12, 0x14, 0x08, 0x15, 0x12, 0x0d, 0x00, 0x00}, /* & */
+    {0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, /* ' */
+    {0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02, 0x00, 0x00}, /* ( */
+    {0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08, 0x00, 0x00}, /* ) */
+    {0x00, 0x04, 0x15, 0x0e, 0x15, 0x04, 0x00, 0x00, 0x00}, /* '*' */
+    {0x00, 0x04, 0x04, 0x1f, 0x04, 0x04, 0x00, 0x00, 0x00}, /* + */
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x04, 0x08, 0x00}, /* , */
+    {0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00, 0x00, 0x00}, /* - */
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c, 0x00, 0x00}, /* . */
+    {0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x00, 0x00, 0x00}, /* '/' */
+    {0x0e, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0e, 0x00, 0x00}, /* 0 */
+    {0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e, 0x00, 0x00}, /* 1 */
+    {0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f, 0x00, 0x00}, /* 2 */
+    {0x1f, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0e, 0x00, 0x00}, /* 3 */
+    {0x02, 0x06, 0x0a, 0x12, 0x1f, 0x02, 0x02, 0x00, 0x00}, /* 4 */
+    {0x1f, 0x10, 0x1e, 0x01, 0x01, 0x11, 0x0e, 0x00, 0x00}, /* 5 */
+    {0x06, 0x08, 0x10, 0x1e, 0x11, 0x11, 0x0e, 0x00, 0x00}, /* 6 */
+    {0x1f, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08, 0x00, 0x00}, /* 7 */
+    {0x0e, 0x11, 0x11, 0x0e, 0x11, 0x11, 0x0e, 0x00, 0x00}, /* 8 */
+    {0x0e, 0x11, 0x11, 0x0f, 0x01, 0x02, 0x0c, 0x00, 0x00}, /* 9 */
+    {0x00, 0x0c, 0x0c, 0x00, 0x0c, 0x0c, 0x00, 0x00, 0x00}, /* : */
+    {0x00, 0x0c, 0x0c, 0x00, 0x0c, 0x0c, 0x04, 0x08, 0x00}, /* ; */
+    {0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02, 0x00, 0x00}, /* < */
+    {0x00, 0x00, 0x1f, 0x00, 0x1f, 0x00, 0x00, 0x00, 0x00}, /* = */
+    {0x08, 0x04, 0x02, 0x01, 0x02, 0x04, 0x08, 0x00, 0x00}, /* > */
+    {0x0e, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04, 0x00, 0x00}, /* ? */
+    {0x0e, 0x11, 0x01, 0x0d, 0x15, 0x15, 0x0e, 0x00, 0x00}, /* @ */
+    {0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11, 0x00, 0x00}, /* A */
+    {0x1e, 0x11, 0x11, 0x1e, 0x11, 0x11, 0x1e, 0x00, 0x00}, /* B */
+    {0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e, 0x00, 0x00}, /* C */
+    {0x1c, 0x12, 0x11, 0x11, 0x11, 0x12, 0x1c, 0x00, 0x00}, /* D */
+    {0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f, 0x00, 0x00}, /* E */
+    {0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x10, 0x00, 0x00}, /* F */
+    {0x0e, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0f, 0x00, 0x00}, /* G */
+    {0x11, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11, 0x00, 0x00}, /* H */
+    {0x0e, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e, 0x00, 0x00}, /* I */
+    {0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0c, 0x00, 0x00}, /* J */
+    {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11, 0x00, 0x00}, /* K */
+    {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f, 0x00, 0x00}, /* L */
+    {0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11, 0x00, 0x00}, /* M */
+    {0x11, 0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x00, 0x00}, /* N */
+    {0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e, 0x00, 0x00}, /* O */
+    {0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10, 0x00, 0x00}, /* P */
+    {0x0e, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0d, 0x00, 0x00}, /* Q */
+    {0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11, 0x00, 0x00}, /* R */
+    {0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e, 0x00, 0x00}, /* S */
+    {0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x00}, /* T */
+    {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e, 0x00, 0x00}, /* U */
+    {0x11, 0x11, 0x11, 0x11, 0x11, 0x0a, 0x04, 0x00, 0x00}, /* V */
+    {0x11, 0x11, 0x11, 0x15, 0x15, 0x15, 0x0a, 0x00, 0x00}, /* W */
+    {0x11, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x11, 0x00, 0x00}, /* X */
+    {0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04, 0x00, 0x00}, /* Y */
+    {0x1f, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1f, 0x00, 0x00}, /* Z */
+    {0x0e, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0e, 0x00, 0x00}, /* [ */
+    {0x00, 0x10, 0x08, 0x04, 0x02, 0x01, 0x00, 0x00, 0x00}, /* '\' */
+    {0x0e, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0e, 0x00, 0x00}, /* ] */
+    {0x04, 0x0a, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, /* ^ */
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1f, 0x00}, /* _ */
+    {0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, /* ` */
+    {0x00, 0x00, 0x0e, 0x01, 0x0f, 0x11, 0x0f, 0x00, 0x00}, /* a */
+    {0x10, 0x10, 0x16, 0x19, 0x11, 0x11, 0x1e, 0x00, 0x00}, /* b */
+    {0x00, 0x00, 0x0e, 0x10, 0x10, 0x11, 0x0e, 0x00, 0x00}, /* c */
+    {0x01, 0x01, 0x0d, 0x13, 0x11, 0x11, 0x0f, 0x00, 0x00}, /* d */
+    {0x00, 0x00, 0x0e, 0x11, 0x1f, 0x10, 0x0e, 0x00, 0x00}, /* e */
+    {0x06, 0x09, 0x08, 0x1c, 0x08, 0x08, 0x08, 0x00, 0x00}, /* f */
+    {0x00, 0x00, 0x0f, 0x11, 0x11, 0x11, 0x0f, 0x01, 0x0e}, /* g */
+    {0x10, 0x10, 0x16, 0x19, 0x11, 0x11, 0x11, 0x00, 0x00}, /* h */
+    {0x04, 0x00, 0x0c, 0x04, 0x04, 0x04, 0x0e, 0x00, 0x00}, /* i */
+    {0x02, 0x00, 0x06, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0c}, /* j */
+    {0x10, 0x10, 0x12, 0x14, 0x18, 0x14, 0x12, 0x00, 0x00}, /* k */
+    {0x0c, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e, 0x00, 0x00}, /* l */
+    {0x00, 0x00, 0x1a, 0x15, 0x15, 0x11, 0x11, 0x00, 0x00}, /* m */
+    {0x00, 0x00, 0x16, 0x19, 0x11, 0x11, 0x11, 0x00, 0x00}, /* n */
+    {0x00, 0x00, 0x0e, 0x11, 0x11, 0x11, 0x0e, 0x00, 0x00}, /* o */
+    {0x00, 0x00, 0x1e, 0x11, 0x11, 0x11, 0x1e, 0x10, 0x10}, /* p */
+    {0x00, 0x00, 0x0f, 0x11, 0x11, 0x11, 0x0f, 0x01, 0x01}, /* q */
+    {0x00, 0x00, 0x16, 0x19, 0x10, 0x10, 0x10, 0x00, 0x00}, /* r */
+    {0x00, 0x00, 0x0f, 0x10, 0x0e, 0x01, 0x1e, 0x00, 0x00}, /* s */
+    {0x08, 0x08, 0x1c, 0x08, 0x08, 0x09, 0x06, 0x00, 0x00}, /* t */
+    {0x00, 0x00, 0x11, 0x11, 0x11, 0x13, 0x0d, 0x00, 0x00}, /* u */
+    {0x00, 0x00, 0x11, 0x11, 0x11, 0x0a, 0x04, 0x00, 0x00}, /* v */
+    {0x00, 0x00, 0x11, 0x11, 0x15, 0x15, 0x0a, 0x00, 0x00}, /* w */
+    {0x00, 0x00, 0x11, 0x0a, 0x04, 0x0a, 0x11, 0x00, 0x00}, /* x */
+    {0x00, 0x00, 0x11, 0x11, 0x11, 0x11, 0x0f, 0x01, 0x0e}, /* y */
+    {0x00, 0x00, 0x1f, 0x02, 0x04, 0x08, 0x1f, 0x00, 0x00}, /* z */
+    {0x03, 0x04, 0x04, 0x08, 0x04, 0x04, 0x03, 0x00, 0x00}, /* { */
+    {0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}, /* | */
+    {0x18, 0x04, 0x04, 0x02, 0x04, 0x04, 0x18, 0x00, 0x00}, /* } */
+    {0x00, 0x00, 0x08, 0x15, 0x02, 0x00, 0x00, 0x00, 0x00}, /* ~ */
+};
+
+gesso_status gesso_text(gesso_doc *d, int32_t x, int32_t y, const char *s, size_t len, uint8_t c) {
+    gesso_status st = check(d, c, x, y, x, y);
+    if (st != GESSO_OK) {
+        return st;
+    }
+    size_t cols = 0;
+    size_t col = 0;
+    size_t lines = 1;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char b = (unsigned char)s[i];
+        if (b == '\n') {
+            lines++;
+            col = 0;
+            continue;
+        }
+        if ((b & 0xc0u) != 0x80u) {
+            col++;
+            cols = col > cols ? col : cols;
+        }
+    }
+    if (cols == 0) {
+        return GESSO_OK;
+    }
+    if (cols * 6 - 1 > GESSO_SIDE_MAX || lines * 10 - 1 > GESSO_SIDE_MAX) {
+        return GESSO_ERR_SIZE;
+    }
+    int32_t w = (int32_t)(cols * 6 - 1);
+    int32_t h = (int32_t)(lines * 10 - 1);
+    if ((int64_t)x + w > GESSO_COORD_MAX || (int64_t)y + h > GESSO_COORD_MAX) {
+        return GESSO_ERR_COORD;
+    }
+    gesso_drop(d);
+    memset(d->lifted.pixels, 0, (size_t)w * (size_t)h);
+    memset(d->mask.pixels, 0, (size_t)w * (size_t)h);
+    int32_t gx = 0;
+    int32_t gy = 0;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char b = (unsigned char)s[i];
+        if (b == '\n') {
+            gx = 0;
+            gy += 10;
+            continue;
+        }
+        if ((b & 0xc0u) == 0x80u) {
+            continue;
+        }
+        const uint8_t *glyph = font[(b >= 32 && b <= 126 ? b : '?') - 32];
+        for (int32_t r = 0; r < 9; r++) {
+            for (int32_t k = 0; k < 5; k++) {
+                if ((unsigned)glyph[r] & (0x10u >> (uint32_t)k)) {
+                    size_t at = (size_t)(gy + r) * (size_t)w + (size_t)(gx + k);
+                    d->lifted.pixels[at] = c;
+                    d->mask.pixels[at] = 1;
+                }
+            }
+        }
+        gx += 6;
+    }
+    d->lifted.w = w;
+    d->lifted.h = h;
+    d->mask.w = w;
+    d->mask.h = h;
+    d->sel = (gesso_rect){x, y, w, h};
+    d->selected = 1;
+    d->masked = 1;
     d->floating = 1;
     gesso_begin(d);
     d->float_group = d->group;

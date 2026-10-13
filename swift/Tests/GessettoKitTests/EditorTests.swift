@@ -94,7 +94,7 @@ final class EditorTests: XCTestCase {
     XCTAssertNotEqual(pixel(e, 11, 1), e.sketch.color(12) | 0xff00_0000)
     XCTAssertTrue(canvas.key(.char("x"), down: true, shift: false))
     XCTAssertEqual(e.bg, 12)
-    XCTAssertFalse(canvas.key(.char("q"), down: true, shift: false))
+    XCTAssertFalse(canvas.key(.char("j"), down: true, shift: false))
   }
 
   func testCanvasSizeAndImportAreSteps() throws {
@@ -388,6 +388,122 @@ final class EditorTests: XCTestCase {
       _ = canvas.key(.char("-"), down: true, shift: false)
     }
     XCTAssertEqual(e.brushSize, 1)
+  }
+
+  func testRoundedRectangleAndSpray() {
+    let (e, undo) = editor()
+    let canvas = CanvasCore(editor: e)
+    e.tool = .rect
+    e.cornerRadius = 2
+    e.setFg(8)
+    step(undo) {
+      canvas.press(at(e, 0, 0), secondary: false, pan: false)
+      canvas.drag(at(e, 8, 6), shift: false, alt: false)
+      canvas.release(at(e, 8, 6), shift: false, alt: false)
+    }
+    var px = e.sketch.argb(frame: 0)
+    XCTAssertEqual(px[0], 0)
+    XCTAssertEqual(px[1], e.sketch.color(8))
+    XCTAssertEqual(px[32], e.sketch.color(8))
+    XCTAssertTrue(canvas.key(.char("a"), down: true, shift: false))
+    XCTAssertEqual(e.tool, .spray)
+    step(undo) {
+      canvas.press(at(e, 20, 20), secondary: false, pan: false)
+      canvas.release(at(e, 20, 20), shift: false, alt: false)
+    }
+    px = e.sketch.argb(frame: 0)
+    XCTAssertGreaterThan(
+      (14..<27).flatMap { y in (14..<27).map { px[y * 32 + $0] } }.filter { $0 != 0 }.count, 0)
+    undo.undo()
+    XCTAssertEqual(e.sketch.argb(frame: 0).filter { $0 != 0 }.count, 24)
+  }
+
+  func testPolygonClosesWithReturn() {
+    let (e, undo) = editor()
+    let canvas = CanvasCore(editor: e)
+    XCTAssertTrue(canvas.key(.char("d"), down: true, shift: false))
+    XCTAssertEqual(e.tool, .polygon)
+    e.setFg(8)
+    step(undo) {
+      for (x, y) in [(0, 0), (6, 0), (0, 6)] {
+        canvas.press(at(e, x, y), secondary: false, pan: false)
+        canvas.release(at(e, x, y), shift: false, alt: false)
+      }
+      XCTAssertTrue(e.shapeOpen)
+      XCTAssertTrue(canvas.key(.enter, down: true, shift: false))
+    }
+    XCTAssertFalse(e.shapeOpen)
+    let px = e.sketch.argb(frame: 0)
+    XCTAssertEqual(px[3 * 32 + 3], e.sketch.color(8))
+    XCTAssertEqual(px[4 * 32 + 4], 0)
+    undo.undo()
+    XCTAssertEqual(e.sketch.argb(frame: 0).filter { $0 != 0 }.count, 0)
+  }
+
+  func testCurveBendsOnTheSecondDrag() {
+    let (e, undo) = editor()
+    let canvas = CanvasCore(editor: e)
+    XCTAssertTrue(canvas.key(.char("c"), down: true, shift: false))
+    XCTAssertEqual(e.tool, .curve)
+    e.setFg(8)
+    step(undo) {
+      canvas.press(at(e, 0, 4), secondary: false, pan: false)
+      canvas.drag(at(e, 8, 4), shift: false, alt: false)
+      canvas.release(at(e, 8, 4), shift: false, alt: false)
+      XCTAssertTrue(e.shapeOpen)
+      canvas.press(at(e, 4, 0), secondary: false, pan: false)
+      canvas.release(at(e, 4, 0), shift: false, alt: false)
+    }
+    XCTAssertFalse(e.shapeOpen)
+    let px = e.sketch.argb(frame: 0)
+    XCTAssertEqual(px[2 * 32 + 4], e.sketch.color(8))
+    XCTAssertEqual(px[4 * 32 + 4], 0)
+    undo.undo()
+    XCTAssertEqual(e.sketch.argb(frame: 0).filter { $0 != 0 }.count, 0)
+  }
+
+  func testLassoSelectsWhatItsPathEncloses() {
+    let (e, undo) = editor()
+    let canvas = CanvasCore(editor: e)
+    e.setFg(8)
+    e.tool = .fill
+    step(undo) {
+      canvas.press(at(e, 0, 0), secondary: false, pan: false)
+      canvas.release(at(e, 0, 0), shift: false, alt: false)
+    }
+    XCTAssertTrue(canvas.key(.char("q"), down: true, shift: false))
+    XCTAssertEqual(e.tool, .lasso)
+    canvas.press(at(e, 0, 0), secondary: false, pan: false)
+    canvas.drag(at(e, 4, 0), shift: false, alt: false)
+    canvas.release(at(e, 0, 4), shift: false, alt: false)
+    XCTAssertEqual(e.sketch.selection, .marked(CGRect(x: 0, y: 0, width: 5, height: 5)))
+    XCTAssertEqual(e.sketch.mask?.filter { $0 != 0 }.count, 15)
+    step(undo) { _ = canvas.key(.delete, down: true, shift: false) }
+    XCTAssertEqual(e.sketch.argb(frame: 0).filter { $0 == 0 }.count, 15)
+  }
+
+  func testTextFloatsWhereClickedAndLands() {
+    let (e, undo) = editor()
+    let canvas = CanvasCore(editor: e)
+    e.setFg(8)
+    XCTAssertTrue(canvas.key(.char("t"), down: true, shift: false))
+    XCTAssertEqual(e.tool, .text)
+    canvas.press(at(e, 2, 2), secondary: false, pan: false)
+    canvas.release(at(e, 2, 2), shift: false, alt: false)
+    XCTAssertEqual(e.textAt?.x, 2)
+    e.textEntry = "Hi"
+    step(undo) { e.placeText() }
+    XCTAssertEqual(e.sketch.selection, .floating(CGRect(x: 2, y: 2, width: 11, height: 9)))
+    // Dropping is the placing's step: it registers nothing of its own.
+    canvas.press(at(e, 20, 20), secondary: false, pan: false)
+    canvas.release(at(e, 20, 20), shift: false, alt: false)
+    XCTAssertEqual(e.sketch.selection, .none)
+    XCTAssertNotNil(e.textAt)
+    XCTAssertEqual(pixel(e, 2, 2), e.sketch.color(8) | 0xff00_0000)
+    XCTAssertEqual(pixel(e, 3, 2) & 0xff00_0000, 0xff00_0000)
+    XCTAssertNotEqual(pixel(e, 3, 2), e.sketch.color(8) | 0xff00_0000)
+    undo.undo()
+    XCTAssertNotEqual(pixel(e, 2, 2), e.sketch.color(8) | 0xff00_0000)
   }
 
   func testDocumentRoundTrip() throws {

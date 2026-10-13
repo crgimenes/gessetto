@@ -1,0 +1,5 @@
+(new 8 8)
+(rect-fill 0 0 3 3 9)
+(lasso 0 0 3 0 0 3)
+(copy)
+(paste 4 4)

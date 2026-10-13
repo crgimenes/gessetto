@@ -1,0 +1,8 @@
+; A 9x7 outline with radius 2, worked by hand from the midpoint circle of
+; radius 2, whose arc is (2,0) (0,2) (2,1) (1,2): each corner loses its
+; tip, so rows 0 and 6 run from x 1 to 7 and the sides stand at x 0 and 8.
+; The filled copy on frame 2 takes the same rows end to end.
+(new 9 7)
+(rect-round 0 0 8 6 2 1)
+(frame-add)
+(rect-round-fill 0 0 8 6 2 2)

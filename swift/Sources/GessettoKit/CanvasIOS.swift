@@ -128,6 +128,9 @@
       let secondary = event?.buttonMask.contains(.secondary) ?? false
       let navigates = t.type == .direct && !editor.fingerDraws
       core.press(t.location(in: self), secondary: secondary, pan: navigates, alt: alt(event))
+      if t.tapCount == 2 && editor.shapeOpen {
+        editor.finishShape()
+      }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {

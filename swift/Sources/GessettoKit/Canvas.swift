@@ -21,6 +21,8 @@ final class CanvasCore {
   private var drawing = false
   var spaceHeld = false
   var ants = 0
+  /// The lasso's path while it is drawn, in image pixels.
+  private var trail: [CGPoint] = []
 
   init(editor: Editor) {
     self.editor = editor
@@ -38,12 +40,18 @@ final class CanvasCore {
       return
     }
     let q = editor.imagePoint(p)
-    if alt && editor.tool != .select && editor.tool != .picker {
+    if alt && ![.select, .lasso, .text, .picker].contains(editor.tool) {
       editor.pick(x: q.x, y: q.y, secondary: secondary)
       return
     }
     drawing = true
     gst_press(g, Int32(clamping: q.x), Int32(clamping: q.y), secondary ? 1 : 0)
+    if editor.tool == .lasso && editor.sketch.selection == .none {
+      trail = [CGPoint(x: q.x, y: q.y)]
+    }
+    if editor.tool == .text && editor.sketch.selection == .none {
+      editor.textAt = q
+    }
     editor.redraw()
   }
 
@@ -58,6 +66,9 @@ final class CanvasCore {
     guard drawing else { return }
     let q = editor.imagePoint(p)
     gst_drag(g, Int32(clamping: q.x), Int32(clamping: q.y), mods(shift, alt))
+    if !trail.isEmpty {
+      trail.append(CGPoint(x: q.x, y: q.y))
+    }
     editor.redraw()
   }
 
@@ -68,6 +79,7 @@ final class CanvasCore {
     }
     guard drawing else { return }
     drawing = false
+    trail = []
     let q = editor.imagePoint(p)
     gst_release(g, Int32(clamping: q.x), Int32(clamping: q.y), mods(shift, alt))
     editor.changed()
@@ -78,6 +90,7 @@ final class CanvasCore {
     panning = false
     guard drawing else { return }
     drawing = false
+    trail = []
     gst_cancel(g)
     editor.redraw()
   }
@@ -139,6 +152,8 @@ final class CanvasCore {
     case .up: editor.moveSelection(dx: 0, dy: -step)
     case .down: editor.moveSelection(dx: 0, dy: step)
     case .delete: editor.deleteSelection()
+    case .enter where editor.shapeOpen: editor.finishShape()
+    case .escape where editor.shapeOpen: editor.cancelShape()
     case .escape, .enter: editor.deselect()
     case .space: break
     case .char(let c): return char(c, shift: shift)
@@ -211,21 +226,16 @@ final class CanvasCore {
       ctx.strokePath()
       ctx.restoreGState()
     }
-    switch sketch.selection {
-    case .none:
-      break
-    case .marked(let r), .floating(let r):
-      let box = CGRect(
-        x: rect.minX + r.minX * z, y: rect.minY + r.minY * z, width: r.width * z,
-        height: r.height * z
-      ).insetBy(dx: hair / 2, dy: hair / 2)
+    if let outline = selectionOutline(origin: rect.origin, z: z, hair: hair) {
       ctx.setLineWidth(hair)
       ctx.setStrokeColor(CGColor(gray: 1, alpha: 1))
-      ctx.stroke(box)
+      ctx.addPath(outline)
+      ctx.strokePath()
       ctx.setStrokeColor(CGColor(gray: 0, alpha: 1))
       ctx.setLineDash(
         phase: CGFloat(ants) * 2 * hair, lengths: [4 * hair * scale, 4 * hair * scale])
-      ctx.stroke(box)
+      ctx.addPath(outline)
+      ctx.strokePath()
       ctx.setLineDash(phase: 0, lengths: [])
     }
     // The pixel under the pointer, outlined to show where the tool lands.
@@ -241,5 +251,49 @@ final class CanvasCore {
       ctx.setStrokeColor(CGColor(gray: 1, alpha: 0.8))
       ctx.stroke(cell.insetBy(dx: hair * 1.5, dy: hair * 1.5))
     }
+  }
+
+  /// Where the marching ants run: the lasso's path while it is drawn, then
+  /// the selection's edge, cell by cell for a lasso's.
+  private func selectionOutline(origin o: CGPoint, z: CGFloat, hair: CGFloat) -> CGPath? {
+    let path = CGMutablePath()
+    if trail.count > 1 {
+      path.addLines(
+        between: trail.map { CGPoint(x: o.x + ($0.x + 0.5) * z, y: o.y + ($0.y + 0.5) * z) })
+      path.closeSubpath()
+      return path
+    }
+    let r: CGRect
+    switch editor.sketch.selection {
+    case .none: return nil
+    case .marked(let s), .floating(let s): r = s
+    }
+    guard let mask = editor.sketch.mask else {
+      path.addRect(
+        CGRect(x: o.x + r.minX * z, y: o.y + r.minY * z, width: r.width * z, height: r.height * z)
+          .insetBy(dx: hair / 2, dy: hair / 2))
+      return path
+    }
+    let w = Int(r.width)
+    let h = Int(r.height)
+    func on(_ x: Int, _ y: Int) -> Bool {
+      x >= 0 && y >= 0 && x < w && y < h && mask[y * w + x] != 0
+    }
+    func at(_ x: Int, _ y: Int) -> CGPoint {
+      CGPoint(x: o.x + (r.minX + CGFloat(x)) * z, y: o.y + (r.minY + CGFloat(y)) * z)
+    }
+    func edge(_ x0: Int, _ y0: Int, _ x1: Int, _ y1: Int) {
+      path.move(to: at(x0, y0))
+      path.addLine(to: at(x1, y1))
+    }
+    for y in 0..<h {
+      for x in 0..<w where on(x, y) {
+        if !on(x, y - 1) { edge(x, y, x + 1, y) }
+        if !on(x, y + 1) { edge(x, y + 1, x + 1, y + 1) }
+        if !on(x - 1, y) { edge(x, y, x, y + 1) }
+        if !on(x + 1, y) { edge(x + 1, y, x + 1, y + 1) }
+      }
+    }
+    return path
   }
 }

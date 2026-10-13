@@ -5,20 +5,24 @@ import ImageIO
 import Observation
 
 public enum Tool: Int, CaseIterable, Identifiable, Sendable {
-  case pencil, eraser, fill, picker, line, rect, ellipse, select
+  case pencil, eraser, fill, picker, line, rect, ellipse, select, spray, polygon, curve, lasso, text
 
   public var id: Int { rawValue }
 
   var name: String {
-    ["Pencil", "Eraser", "Fill", "Picker", "Line", "Rectangle", "Ellipse", "Select"][rawValue]
+    [
+      "Pencil", "Eraser", "Fill", "Picker", "Line", "Rectangle", "Ellipse", "Select", "Spray",
+      "Polygon", "Curve", "Lasso", "Text",
+    ][rawValue]
   }
 
-  var key: Character { Array("beginrom")[rawValue] }
+  var key: Character { Array("beginromadcqt")[rawValue] }
 
   var symbol: String {
     [
       "pencil", "eraser", "drop.fill", "eyedropper", "line.diagonal", "rectangle", "circle",
-      "rectangle.dashed",
+      "rectangle.dashed", "aqi.medium", "pentagon",
+      "point.topleft.down.curvedto.point.bottomright.up", "lasso", "textformat",
     ][rawValue]
   }
 }
@@ -97,6 +101,9 @@ public final class Editor {
   var exportFile: ExportFile?
   /// The tag sheet: a new tag (empty name) or the one being edited.
   var tagSheet: Sketch.Tag?
+  /// Where the text tool was clicked, while it asks for the text.
+  var textAt: (x: Int, y: Int)?
+  var textEntry = ""
   public var error: String?
   public var cursor: (x: Int, y: Int)?
 
@@ -258,8 +265,49 @@ public final class Editor {
     }
   }
 
+  /// The spray's radius.
+  public var sprayRadius: Int {
+    get {
+      _ = revision
+      return Int(gst_spray(g))
+    }
+    set {
+      gst_spray_set(g, Int32(clamping: newValue))
+      changed()
+    }
+  }
+
+  /// The rectangle's corner radius.
+  public var cornerRadius: Int {
+    get {
+      _ = revision
+      return Int(gst_radius(g))
+    }
+    set {
+      gst_radius_set(g, Int32(clamping: newValue))
+      changed()
+    }
+  }
+
   var usesBrush: Bool {
-    [.pencil, .eraser, .line, .rect, .ellipse].contains(tool)
+    [.pencil, .eraser, .line, .rect, .ellipse, .polygon, .curve].contains(tool)
+  }
+
+  /// A polygon is being made, one click a vertex, or a curve waits for its
+  /// bend.
+  var shapeOpen: Bool {
+    _ = revision
+    return gst_shape_open(g) != 0
+  }
+
+  public func finishShape() {
+    gst_finish(g)
+    changed()
+  }
+
+  public func cancelShape() {
+    gst_cancel(g)
+    changed()
   }
 
   public var transparentSelection: Bool {
@@ -317,6 +365,23 @@ public final class Editor {
   }
 
   public func selectAll() { run { gst_select_all($0) } }
+
+  /// The text asked for floats where the text tool was clicked, to be moved
+  /// before it lands.
+  func placeText() {
+    guard let at = textAt else { return }
+    textAt = nil
+    let s = Array(textEntry.utf8CString.dropLast())
+    guard !s.isEmpty else { return }
+    let placed = s.withUnsafeBufferPointer {
+      gst_text(g, Int32(at.x), Int32(at.y), $0.baseAddress, $0.count)
+    }
+    guard placed != 0 else {
+      error = "The text does not fit in 256 × 256 pixels."
+      return
+    }
+    changed()
+  }
   public func deselect() { run { gst_deselect($0) } }
   public func deleteSelection() { run { gst_delete($0) } }
   public func flip(vertical: Bool) { run { gst_flip($0, vertical ? 1 : 0) } }

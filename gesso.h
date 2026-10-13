@@ -98,6 +98,10 @@ typedef struct {
     int floating;
     int transparent; /* floating index 0 shows what is under it */
     gesso_rect sel;
+    int masked; /* a lasso's: only the cells set in mask are selected */
+    gesso_patch mask;
+    int lassoing; /* mask holds the path drawn so far, image-wide */
+    int32_t lasso_x0, lasso_y0, lasso_x, lasso_y;
     gesso_patch lifted;
     gesso_patch clip;
     gesso_patch scratch;
@@ -151,6 +155,25 @@ gesso_status gesso_pixel(gesso_doc *d, int32_t x, int32_t y, uint8_t c);
 gesso_status gesso_line(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint8_t c);
 gesso_status gesso_rect_draw(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, int32_t y1,
                              uint8_t c, int filled);
+enum {
+    GESSO_POLYGON_MAX = 64,
+};
+
+/* A closed polygon through n vertices (3 to GESSO_POLYGON_MAX); filled takes
+   every pixel whose center lies inside, and the outline too. */
+gesso_status gesso_polygon(gesso_doc *d, const int32_t *xs, const int32_t *ys, uint32_t n,
+                           uint8_t c, int filled);
+/* A quadratic Bezier from (x0, y0) to (x1, y1) bent toward (cx, cy). */
+gesso_status gesso_curve(gesso_doc *d, int32_t x0, int32_t y0, int32_t cx, int32_t cy, int32_t x1,
+                         int32_t y1, uint8_t c);
+/* Spray: count dots inside the circle of radius r around (x, y), placed by
+   a generator started from seed, so the same call gives the same dots. */
+gesso_status gesso_spray(gesso_doc *d, int32_t x, int32_t y, int32_t r, uint32_t count,
+                         uint32_t seed, uint8_t c);
+/* A rectangle with its corners rounded to radius r (0 is square; at most
+   half the shorter side). */
+gesso_status gesso_rect_round(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, int32_t y1,
+                              int32_t r, uint8_t c, int filled);
 gesso_status gesso_ellipse(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint8_t c,
                            int filled);
 gesso_status gesso_fill(gesso_doc *d, int32_t x, int32_t y, uint8_t c);
@@ -158,6 +181,12 @@ gesso_status gesso_fill(gesso_doc *d, int32_t x, int32_t y, uint8_t c);
 /* Selection. The first move lifts the pixels and leaves index 0; lifting and
    dropping is one undo step, and undo while floating puts them back. */
 gesso_status gesso_select(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, int32_t y1);
+/* The lasso: a freehand path, closed back to its start, selects what it
+   encloses, the path included. Points off the image are pulled to its edge. */
+gesso_status gesso_lasso_begin(gesso_doc *d, int32_t x, int32_t y);
+gesso_status gesso_lasso_to(gesso_doc *d, int32_t x, int32_t y);
+void gesso_lasso_end(gesso_doc *d);
+int gesso_selected(const gesso_doc *d, int32_t x, int32_t y);
 gesso_status gesso_move_selection(gesso_doc *d, int32_t dx, int32_t dy);
 gesso_status gesso_duplicate_selection(gesso_doc *d, int32_t dx, int32_t dy);
 void gesso_selection_transparent(gesso_doc *d, int on);
@@ -168,6 +197,11 @@ gesso_status gesso_delete_selection(gesso_doc *d);
 gesso_status gesso_copy(gesso_doc *d);
 gesso_status gesso_cut(gesso_doc *d);
 gesso_status gesso_paste(gesso_doc *d, int32_t x, int32_t y);
+/* Text in the built-in 5x9 font, a character every 6 pixels and a line
+   ('\n' starts one) every 10, floating at (x, y) with the glyphs as its
+   mask: it moves before it drops, and only the letters land. Anything but
+   printable ASCII shows as '?', one per UTF-8 character. */
+gesso_status gesso_text(gesso_doc *d, int32_t x, int32_t y, const char *s, size_t len, uint8_t c);
 /* Puts w x h indices in the clipboard, for a paste from outside. */
 gesso_status gesso_clip_set(gesso_doc *d, const uint8_t *px, int32_t w, int32_t h);
 

@@ -101,6 +101,9 @@
       window?.makeFirstResponder(self)
       core.press(
         point(e), secondary: false, pan: false, alt: e.modifierFlags.contains(.option))
+      if e.clickCount == 2 && editor.shapeOpen {
+        editor.finishShape()
+      }
     }
 
     override func mouseDragged(with e: NSEvent) {

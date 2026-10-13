@@ -1,7 +1,8 @@
 /* A decoded PNG as a one-frame gesso image. Alpha under 128 is index 0. An
    indexed PNG keeps its palette's order (the artist's ramps), its
    transparent entries dropped; any other kind gets its colors in the order
-   they first appear, row by row. More than 255 colors is an error. */
+   they first appear, row by row. More than 255 colors are cut down to 255
+   by median cut. */
 #ifndef GESSO_PNG_H
 #define GESSO_PNG_H
 

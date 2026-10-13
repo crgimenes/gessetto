@@ -33,6 +33,11 @@ typedef enum {
     GST_RECT,
     GST_ELLIPSE,
     GST_SELECT,
+    GST_SPRAY,
+    GST_POLYGON,
+    GST_CURVE,
+    GST_LASSO,
+    GST_TEXT,
     GST_TOOL_COUNT,
 } gst_tool;
 
@@ -90,6 +95,9 @@ uint32_t gst_tag_direction(const gst *g, uint32_t tag);
 uint8_t gst_index_at(const gst *g, int32_t x, int32_t y);
 /* 0 without a selection, 1 with one, 2 while it floats; r gets x, y, w, h. */
 int gst_selection(const gst *g, int32_t r[4]);
+/* A lasso's selection: one byte per cell of the rectangle, row by row, set
+   where selected. NULL when the whole rectangle is. */
+const uint8_t *gst_mask(const gst *g);
 
 gst_tool gst_tool_get(const gst *g);
 void gst_tool_set(gst *g, gst_tool t);
@@ -106,12 +114,25 @@ void gst_brush_set(gst *g, uint32_t size, int round);
 uint32_t gst_brush_size(const gst *g);
 int gst_brush_round(const gst *g);
 
+/* The spray's radius, 1 to 32. */
+void gst_spray_set(gst *g, int32_t r);
+int32_t gst_spray(const gst *g);
+
+/* The rectangle tool's corner radius, 0 to 64. */
+void gst_radius_set(gst *g, int32_t r);
+int32_t gst_radius(const gst *g);
+
 /* A gesture, in image pixels (outside the image is fine). */
 void gst_press(gst *g, int32_t x, int32_t y, int secondary);
 void gst_drag(gst *g, int32_t x, int32_t y, uint32_t mods);
 void gst_release(gst *g, int32_t x, int32_t y, uint32_t mods);
-/* The press was not meant: what it drew goes back, nothing is kept. */
+/* The press was not meant: what it drew goes back, nothing is kept (a
+   polygon in the making included). */
 void gst_cancel(gst *g);
+/* A polygon is being made, one press a vertex, or a curve waits for its
+   bend; gst_finish closes it as it is. */
+int gst_shape_open(const gst *g);
+void gst_finish(gst *g);
 
 /* The history, step by step, for the platform's undo manager: after an
    action, gst_new_step says whether it began a step (once per step, however
@@ -129,6 +150,9 @@ int gst_delete(gst *g);
 int gst_copy(gst *g);
 int gst_cut(gst *g);
 int gst_paste(gst *g, int32_t x, int32_t y);
+/* UTF-8 text in the foreground color, floating at (x, y); 0 when it would
+   not fit in 256 x 256. */
+int gst_text(gst *g, int32_t x, int32_t y, const char *s, size_t len);
 int gst_move_selection(gst *g, int32_t dx, int32_t dy);
 int gst_flip(gst *g, int vertical);
 int gst_rotate(gst *g);

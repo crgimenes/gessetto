@@ -14,6 +14,11 @@ typedef enum {
     TOOL_RECT,
     TOOL_ELLIPSE,
     TOOL_SELECT,
+    TOOL_SPRAY,
+    TOOL_POLYGON,
+    TOOL_CURVE,
+    TOOL_LASSO,
+    TOOL_TEXT, /* the app asks for the text; here it moves what was placed */
     TOOL_COUNT,
 } tool_id;
 
@@ -31,6 +36,23 @@ typedef struct {
     uint8_t fg;
     uint8_t bg;
     int filled;
+    int32_t radius; /* the rectangle's corners */
+    int32_t spray;  /* the spray's radius */
+    uint32_t seed;  /* the spray's next dots */
+
+    /* A polygon being made, one click a vertex: what is drawn so far stays
+       in an open undo group until it closes. */
+    uint32_t npoly;
+    int32_t polyx[GESSO_POLYGON_MAX];
+    int32_t polyy[GESSO_POLYGON_MAX];
+
+    /* A curve: the first drag lays the line (bending, then 1), the second
+       pulls its control point; the group stays open between them. */
+    int bending;
+    int32_t cx1;
+    int32_t cy1;
+    int32_t ctlx;
+    int32_t ctly;
     int pixel_perfect;
     int mirror_x;
     int mirror_y;
@@ -59,8 +81,13 @@ void editor_tool(editor *e, tool_id t);
 void editor_press(editor *e, int32_t x, int32_t y, int secondary);
 void editor_drag(editor *e, int32_t x, int32_t y, uint32_t mods);
 void editor_release(editor *e, int32_t x, int32_t y, uint32_t mods);
+/* A polygon in the making closes (it needs three vertices; fewer draw a
+   line or a point), a curve waiting for its bend stays straight. Changing
+   tool does it too. */
+void editor_finish(editor *e);
+
 /* The press was not meant (a two-finger gesture took it): what it drew goes
-   back, and nothing enters the history. */
+   back, and nothing enters the history; a polygon in the making goes too. */
 void editor_cancel(editor *e);
 
 #endif

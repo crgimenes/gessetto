@@ -83,11 +83,18 @@ static void say_line(char *dst, uint32_t line, const char *msg) {
 }
 
 /* A color edit left open ends before anything else happens. */
-static void settle(gst *g) {
+static void settle_color(gst *g) {
     if (g->live) {
         gesso_end(&g->doc);
         g->live = 0;
     }
+}
+
+/* Before any edit but a gesture: an open color edit ends and a polygon in
+   the making closes. */
+static void settle(gst *g) {
+    settle_color(g);
+    editor_finish(&g->ed);
 }
 
 /* Undo can take colors away from under the tools. */
@@ -155,10 +162,6 @@ int gst_import_png(gst *g, const uint8_t *src, size_t len, char err[GST_ERROR_MA
         return 0;
     }
     gesso_status gs = gesso_from_png(&scratch, &p);
-    if (gs == GESSO_ERR_PALETTE_FULL) {
-        say(err, "It has more than 255 colors.", NULL);
-        return 0;
-    }
     if (gs != GESSO_OK) {
         say(err, gesso_message(gs), NULL);
         return 0;
@@ -173,10 +176,6 @@ int gst_import_png(gst *g, const uint8_t *src, size_t len, char err[GST_ERROR_MA
 int gst_import_sheet(gst *g, const uint32_t *argb, int32_t sw, int32_t sh, int32_t w, int32_t h,
                      char err[GST_ERROR_MAX]) {
     gesso_status st = gesso_from_sheet(&scratch, argb, sw, sh, w, h);
-    if (st == GESSO_ERR_PALETTE_FULL) {
-        say(err, "It has more than 255 colors.", NULL);
-        return 0;
-    }
     if (st == GESSO_ERR_FRAMES_FULL) {
         say(err, "That cuts it into more than 256 frames.", NULL);
         return 0;
@@ -296,6 +295,10 @@ int gst_selection(const gst *g, int32_t r[4]) {
     return d->floating ? 2 : 1;
 }
 
+const uint8_t *gst_mask(const gst *g) {
+    return g->doc.selected && g->doc.masked ? g->doc.mask.pixels : NULL;
+}
+
 gst_tool gst_tool_get(const gst *g) {
     return (gst_tool)g->ed.tool;
 }
@@ -386,6 +389,28 @@ int gst_brush_round(const gst *g) {
     return g->doc.brush_round;
 }
 
+void gst_spray_set(gst *g, int32_t r) {
+    g->ed.spray = r < 1 ? 1 : r;
+    if (g->ed.spray > 32) {
+        g->ed.spray = 32;
+    }
+}
+
+int32_t gst_spray(const gst *g) {
+    return g->ed.spray;
+}
+
+void gst_radius_set(gst *g, int32_t r) {
+    g->ed.radius = r < 0 ? 0 : r;
+    if (g->ed.radius > 64) {
+        g->ed.radius = 64;
+    }
+}
+
+int32_t gst_radius(const gst *g) {
+    return g->ed.radius;
+}
+
 static uint32_t editor_mods(uint32_t mods) {
     uint32_t m = 0;
     if (mods & GST_SHIFT) {
@@ -398,7 +423,7 @@ static uint32_t editor_mods(uint32_t mods) {
 }
 
 void gst_press(gst *g, int32_t x, int32_t y, int secondary) {
-    settle(g);
+    settle_color(g);
     editor_press(&g->ed, x, y, secondary);
 }
 
@@ -412,6 +437,14 @@ void gst_release(gst *g, int32_t x, int32_t y, uint32_t mods) {
 
 void gst_cancel(gst *g) {
     editor_cancel(&g->ed);
+}
+
+int gst_shape_open(const gst *g) {
+    return g->ed.npoly > 0 || g->ed.bending;
+}
+
+void gst_finish(gst *g) {
+    editor_finish(&g->ed);
 }
 
 int gst_new_step(gst *g) {
@@ -479,6 +512,11 @@ int gst_paste(gst *g, int32_t x, int32_t y) {
     settle(g);
     editor_tool(&g->ed, TOOL_SELECT);
     return ok(gesso_paste(&g->doc, x, y));
+}
+
+int gst_text(gst *g, int32_t x, int32_t y, const char *s, size_t len) {
+    settle(g);
+    return ok(gesso_text(&g->doc, x, y, s, len, g->ed.fg));
 }
 
 int gst_move_selection(gst *g, int32_t dx, int32_t dy) {

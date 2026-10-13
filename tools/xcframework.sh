@@ -26,9 +26,11 @@ module CGessetto {
 }
 MAP
 
+# The Mac's slice is universal: macos (arm64) and macos-x86 are built apart
+# and joined by lipo below.
 args=""
-for slice in macos:macosx:arm64-apple-macos14.0 ios:iphoneos:arm64-apple-ios17.0 \
-    ios-sim:iphonesimulator:arm64-apple-ios17.0-simulator; do
+for slice in macos:macosx:arm64-apple-macos14.0 macos-x86:macosx:x86_64-apple-macos14.0 \
+    ios:iphoneos:arm64-apple-ios17.0 ios-sim:iphonesimulator:arm64-apple-ios17.0-simulator; do
     name=${slice%%:*}
     rest=${slice#*:}
     sdk=${rest%%:*}
@@ -41,7 +43,16 @@ for slice in macos:macosx:arm64-apple-macos14.0 ios:iphoneos:arm64-apple-ios17.0
         $cc $flags -target "$target" -isysroot "$sysroot" -c "$src" -o "$obj"
     done
     ar rcs "$out/$name/libgessetto.a" "$out/$name"/obj/*.o
-    args="$args -library $out/$name/libgessetto.a -headers $out/include"
+    case "$name" in
+    macos) ;;
+    macos-x86)
+        mkdir -p "$out/mac"
+        lipo -create -output "$out/mac/libgessetto.a" "$out/macos/libgessetto.a" \
+            "$out/macos-x86/libgessetto.a"
+        args="$args -library $out/mac/libgessetto.a -headers $out/include"
+        ;;
+    *) args="$args -library $out/$name/libgessetto.a -headers $out/include" ;;
+    esac
 done
 # shellcheck disable=SC2086 # args is a list on purpose
 xcodebuild -create-xcframework $args -output swift/Frameworks/CGessetto.xcframework >/dev/null

@@ -156,6 +156,14 @@ public final class Sketch: @unchecked Sendable {
     }
   }
 
+  /// A lasso's selection, one byte per cell of its rectangle; nil when the
+  /// whole rectangle is selected.
+  public var mask: [UInt8]? {
+    var r: [Int32] = [0, 0, 0, 0]
+    guard gst_selection(g, &r) != 0, let m = gst_mask(g) else { return nil }
+    return Array(UnsafeBufferPointer(start: m, count: Int(r[2]) * Int(r[3])))
+  }
+
   /// A frame as opaque pixels, transparency drawn as the checkerboard for
   /// that zoom; nil for a frame that is not there.
   public func image(frame: Int, zoom: Int, onion: Bool) -> CGImage? {

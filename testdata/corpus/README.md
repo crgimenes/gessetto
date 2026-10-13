@@ -40,9 +40,14 @@ The four above build an image (an ops script may start with them), or:
 | `(pixel x y c)` | set one pixel of the active frame |
 | `(line x0 y0 x1 y1 c)` | Bresenham line, both ends included |
 | `(rect x0 y0 x1 y1 c)` / `(rect-fill ...)` | outline / area of the rectangle with those corners, both included |
+| `(curve x0 y0 cx cy x1 y1 c)` | quadratic Bezier from (x0, y0) to (x1, y1) bent toward (cx, cy): 2·max(Σ|dx|, Σ|dy|)+1 steps, each point ((n−i)²p0 + 2i(n−i)c + i²p1)/n² rounded to nearest, joined by Bresenham, then made pixel-perfect from each end toward the middle: a pixel whose last kept neighbour and next one are diagonal neighbours (the corner of an L) is dropped, so a symmetric curve stays symmetric; stamped with the pen |
+| `(spray x y r count seed c)` | count dots inside the circle of radius r around (x, y), placed by xorshift32 from seed (0 counts as 1): x offset from the step's value modulo 2r+1, y from its quotient; a point outside the circle is drawn again, up to 4·count+4 tries. Its golden pins the generator; that the dots stay in the circle and repeat with the seed is checked in `gessetto_test.c` |
+| `(rect-round x0 y0 x1 y1 r c)` / `(rect-round-fill ...)` | a rectangle with corners rounded to radius r (at most half the shorter side; 0 is square): each corner is a quarter of the midpoint circle of radius r, and the fill takes the same reach on every row as the outline |
 | `(ellipse x0 y0 x1 y1 c)` / `(ellipse-fill ...)` | outline / area of the ellipse inscribed in that rectangle |
 | `(fill x y c)` | 4-connected fill of the pixels with the index at (x, y) |
 | `(select x0 y0 x1 y1)` | select that rectangle, clipped to the image; drops any selection first |
+| `(text x y "s" c)` | s in the built-in 5x9 font, color c, floating at (x, y): 6 pixels a character, 10 a line (`\n` starts one); only the glyphs land; anything but printable ASCII is one `?` per UTF-8 character |
+| `(lasso x0 y0 x1 y1 ...)` | select what the path through those points, closed back to the first, encloses, the path included; points off the image are pulled to its edge; moves, flips, rotations, copies and deletes then touch only those pixels, and a copy leaves the rest index 0 |
 | `(move-selection dx dy)` | the first move lifts the pixels, leaving index 0; later moves shift them |
 | `(duplicate-selection dx dy)` | as move, but the first move leaves the pixels in place |
 | `(selection-transparent b)` | `#t`: index 0 of the floating pixels shows what is under them, on screen and on drop |

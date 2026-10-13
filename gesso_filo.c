@@ -34,8 +34,8 @@ static int fail(filo_ctx *ctx, const char *what) {
 
 static int count(filo_ctx *ctx, uint32_t n, uint32_t want) {
     static const char *const expects[] = {
-        "expects no arguments", "expects 1 argument",  "expects 2 arguments",
-        "expects 3 arguments",  "expects 4 arguments", "expects 5 arguments",
+        "expects no arguments", "expects 1 argument",  "expects 2 arguments", "expects 3 arguments",
+        "expects 4 arguments",  "expects 5 arguments", "expects 6 arguments",
     };
     if (n == want) {
         return FILO_OK;
@@ -350,6 +350,83 @@ static int b_rect_fill(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_valu
     return shape(ctx, gesso_rect_draw, 1, a, n, out);
 }
 
+static int rect_round(filo_ctx *ctx, int filled, const filo_value *a, uint32_t n, filo_value *out) {
+    int32_t v[6];
+    uint8_t c;
+    if (ints(ctx, a, n, 6, v) != FILO_OK || index_ok(ctx, v[5], &c) != FILO_OK) {
+        return FILO_ERR;
+    }
+    return done(ctx, gesso_rect_round(doc(ctx), v[0], v[1], v[2], v[3], v[4], c, filled), out);
+}
+
+static int b_rect_round(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
+    return rect_round(ctx, 0, a, n, out);
+}
+
+static int b_rect_round_fill(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
+    return rect_round(ctx, 1, a, n, out);
+}
+
+static int b_spray(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
+    int32_t v[6];
+    uint8_t c;
+    if (ints(ctx, a, n, 6, v) != FILO_OK || index_ok(ctx, v[5], &c) != FILO_OK) {
+        return FILO_ERR;
+    }
+    if (v[3] < 0 || v[4] < 0) {
+        return fail(ctx, "spray count and seed must not be negative");
+    }
+    return done(ctx, gesso_spray(doc(ctx), v[0], v[1], v[2], (uint32_t)v[3], (uint32_t)v[4], c),
+                out);
+}
+
+/* (polygon c x0 y0 x1 y1 ...): the color, then the vertices. */
+static int polygon(filo_ctx *ctx, int filled, const filo_value *a, uint32_t n, filo_value *out) {
+    if (n < 7 || n % 2 == 0 || (n - 1) / 2 > GESSO_POLYGON_MAX) {
+        return fail(ctx, "expects a color and 3 to 64 vertices");
+    }
+    int32_t v;
+    uint8_t c;
+    if (int_arg(ctx, &a[0], &v) != FILO_OK || index_ok(ctx, v, &c) != FILO_OK) {
+        return FILO_ERR;
+    }
+    int32_t xs[GESSO_POLYGON_MAX] = {0};
+    int32_t ys[GESSO_POLYGON_MAX] = {0};
+    uint32_t m = (n - 1) / 2;
+    for (uint32_t i = 0; i < m; i++) {
+        if (int_arg(ctx, &a[1 + 2 * i], &xs[i]) != FILO_OK ||
+            int_arg(ctx, &a[2 + 2 * i], &ys[i]) != FILO_OK) {
+            return FILO_ERR;
+        }
+    }
+    return done(ctx, gesso_polygon(doc(ctx), xs, ys, m, c, filled), out);
+}
+
+static int b_polygon(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
+    return polygon(ctx, 0, a, n, out);
+}
+
+static int b_polygon_fill(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
+    return polygon(ctx, 1, a, n, out);
+}
+
+static int b_curve(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
+    int32_t v[7];
+    uint8_t c;
+    if (n != 7) {
+        return fail(ctx, "expects 7 arguments");
+    }
+    for (uint32_t i = 0; i < 7; i++) {
+        if (int_arg(ctx, &a[i], &v[i]) != FILO_OK) {
+            return FILO_ERR;
+        }
+    }
+    if (index_ok(ctx, v[6], &c) != FILO_OK) {
+        return FILO_ERR;
+    }
+    return done(ctx, gesso_curve(doc(ctx), v[0], v[1], v[2], v[3], v[4], v[5], c), out);
+}
+
 static int b_ellipse(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
     return shape(ctx, gesso_ellipse, 0, a, n, out);
 }
@@ -373,6 +450,42 @@ static int b_select(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *
         return FILO_ERR;
     }
     return done(ctx, gesso_select(doc(ctx), v[0], v[1], v[2], v[3]), out);
+}
+
+/* (lasso x0 y0 x1 y1 ...): the path's points, at least one. */
+static int b_lasso(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
+    if (n < 2 || n % 2 != 0) {
+        return fail(ctx, "expects x y pairs");
+    }
+    gesso_doc *d = doc(ctx);
+    for (uint32_t i = 0; i < n; i += 2) {
+        int32_t x;
+        int32_t y;
+        if (int_arg(ctx, &a[i], &x) != FILO_OK || int_arg(ctx, &a[i + 1], &y) != FILO_OK) {
+            return FILO_ERR;
+        }
+        gesso_status st = i == 0 ? gesso_lasso_begin(d, x, y) : gesso_lasso_to(d, x, y);
+        if (st != GESSO_OK) {
+            return done(ctx, st, out);
+        }
+    }
+    gesso_lasso_end(d);
+    return done(ctx, GESSO_OK, out);
+}
+
+/* (text x y "string" c) */
+static int b_text(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
+    int32_t x;
+    int32_t y;
+    int32_t v;
+    uint8_t c;
+    filo_str s;
+    if (count(ctx, n, 4) != FILO_OK || int_arg(ctx, &a[0], &x) != FILO_OK ||
+        int_arg(ctx, &a[1], &y) != FILO_OK || str_arg(ctx, &a[2], &s) != FILO_OK ||
+        int_arg(ctx, &a[3], &v) != FILO_OK || index_ok(ctx, v, &c) != FILO_OK) {
+        return FILO_ERR;
+    }
+    return done(ctx, gesso_text(doc(ctx), x, y, (const char *)s.ptr, s.len, c), out);
 }
 
 static int b_move_selection(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
@@ -697,10 +810,18 @@ static const builtin ops_builtins[] = {
     {"line", b_line},
     {"rect", b_rect},
     {"rect-fill", b_rect_fill},
+    {"rect-round", b_rect_round},
+    {"spray", b_spray},
+    {"curve", b_curve},
+    {"polygon", b_polygon},
+    {"polygon-fill", b_polygon_fill},
+    {"rect-round-fill", b_rect_round_fill},
     {"ellipse", b_ellipse},
     {"ellipse-fill", b_ellipse_fill},
     {"fill", b_fill},
     {"select", b_select},
+    {"lasso", b_lasso},
+    {"text", b_text},
     {"move-selection", b_move_selection},
     {"duplicate-selection", b_duplicate_selection},
     {"selection-transparent", b_selection_transparent},

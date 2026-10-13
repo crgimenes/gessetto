@@ -1,0 +1,8 @@
+; The triangle (0,0) (6,0) (0,6), worked by hand. Outline: row 0, column 0
+; and the diagonal x = 6 - y. Filled (frame 2): a pixel whose center
+; (x + 1/2, y + 1/2) is inside has x + 1/2 <= 6 - (y + 1/2), x <= 5 - y,
+; and the diagonal adds x = 6 - y: row y runs from 0 to 6 - y.
+(new 7 7)
+(polygon 1 0 0 6 0 0 6)
+(frame-add)
+(polygon-fill 2 0 0 6 0 0 6)

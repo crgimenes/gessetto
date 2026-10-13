@@ -221,6 +221,24 @@ static void test_sheet(void) {
     CHECK(!gst_import_sheet(g, sheet, 5, 2, 3, 3, err));
     CHECK(!gst_import_sheet(g, sheet, 5, 2, 0, 2, err));
     CHECK(gst_undo(g) && gst_width(g) == 32);
+
+    /* 512 colors in two 16 x 16 frames: cut to 255 by median cut, each
+       pixel close to its own color. */
+    static uint32_t many[32 * 16];
+    for (uint32_t i = 0; i < 32 * 16; i++) {
+        many[i] = 0xff000000u | (i % 32u * 8u) << 16u | (i / 32u * 16u) << 8u | (i & 1u) * 64u;
+    }
+    CHECK(gst_import_sheet(g, many, 32, 16, 16, 16, err));
+    CHECK(gst_frames(g) == 2 && gst_colors(g) == 256);
+    for (int32_t i = 0; i < 32 * 16; i++) {
+        int32_t x = i % 32;
+        CHECK(gst_frame_select(g, (uint32_t)(x / 16)));
+        uint32_t c = gst_color(g, gst_index_at(g, x % 16, i / 32));
+        for (uint32_t shift = 0; shift < 24; shift += 8) {
+            int32_t d = (int32_t)(c >> shift & 0xffu) - (int32_t)(many[i] >> shift & 0xffu);
+            CHECK(d > -40 && d < 40);
+        }
+    }
     free(g);
 }
 
@@ -265,6 +283,38 @@ static void test_palette_load(void) {
     CHECK(gst_index_at(g, 0, 0) == 2 && gst_index_at(g, 1, 0) == 1 && gst_index_at(g, 2, 0) == 1);
     CHECK(!gst_palette_load(g, two, 0, 0));
     free(g);
+}
+
+/* The spray: the same gesture gives the same dots, all within its radius. */
+static void test_spray(void) {
+    static uint32_t a[GST_SIDE_MAX * GST_SIDE_MAX];
+    static uint32_t b[GST_SIDE_MAX * GST_SIDE_MAX];
+    for (int k = 0; k < 2; k++) {
+        gst *g = fresh();
+        gst_tool_set(g, GST_SPRAY);
+        gst_spray_set(g, 5);
+        gst_set_fg(g, 9);
+        gst_press(g, 16, 16, 0);
+        gst_drag(g, 17, 16, 0);
+        gst_release(g, 17, 16, 0);
+        gst_frame_argb(g, 0, k == 0 ? a : b);
+        CHECK(gst_new_step(g));
+        free(g);
+    }
+    CHECK(memcmp(a, b, (size_t)32 * 32 * sizeof a[0]) == 0);
+    int dots = 0;
+    for (int32_t y = 0; y < 32; y++) {
+        for (int32_t x = 0; x < 32; x++) {
+            if (a[y * 32 + x] == 0) {
+                continue;
+            }
+            dots++;
+            int32_t d0 = (x - 16) * (x - 16) + (y - 16) * (y - 16);
+            int32_t d1 = (x - 17) * (x - 17) + (y - 16) * (y - 16);
+            CHECK(d0 <= 25 || d1 <= 25);
+        }
+    }
+    CHECK(dots >= 6);
 }
 
 static void test_files(void) {
@@ -374,6 +424,7 @@ int main(void) {
     test_sheet();
     test_frames_paste();
     test_palette_load();
+    test_spray();
     test_clipboard_and_render();
     if (failures > 0) {
         fprintf(stderr, "%d failures\n", failures);

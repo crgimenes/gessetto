@@ -79,6 +79,64 @@ static void test_brush_skips_pixel_perfect(void) {
     expect("brush with pixel-perfect on", want);
 }
 
+/* Three clicks, then a click on the first vertex: one closed triangle, one
+   undo step; a cancelled one leaves nothing. */
+static void test_polygon(void) {
+    fresh(7, 7);
+    editor_tool(&ed, TOOL_POLYGON);
+    static const int32_t v[] = {0, 0, 6, 0, 0, 6, 0, 0};
+    for (size_t i = 0; i < 4; i++) {
+        editor_press(&ed, v[2 * i], v[2 * i + 1], 0);
+        editor_release(&ed, v[2 * i], v[2 * i + 1], 0);
+    }
+    check("polygon", ed.npoly == 0, "closes on the first vertex");
+    static const char *const want[] = {
+        "1111111", "1000010", "1000100", "1001000", "1010000", "1100000", "1000000",
+    };
+    expect("polygon", want);
+    check("polygon", gesso_undo(&doc) == 1, "one step");
+    static const char *const blank[] = {
+        "0000000", "0000000", "0000000", "0000000", "0000000", "0000000", "0000000",
+    };
+    expect("polygon undo", blank);
+
+    editor_press(&ed, 1, 1, 0);
+    editor_release(&ed, 1, 1, 0);
+    editor_press(&ed, 5, 1, 0);
+    editor_release(&ed, 5, 1, 0);
+    editor_cancel(&ed);
+    expect("polygon cancelled", blank);
+    check("polygon cancelled", gesso_undo(&doc) == 0, "nothing to undo");
+}
+
+/* A drag lays the line, a second drag bends it: one step. A curve left
+   unbent stays the line when the tool changes. */
+static void test_curve(void) {
+    fresh(9, 5);
+    editor_tool(&ed, TOOL_CURVE);
+    editor_press(&ed, 0, 4, 0);
+    editor_drag(&ed, 8, 4, 0);
+    editor_release(&ed, 8, 4, 0);
+    check("curve", ed.bending == 1, "waits for its bend");
+    editor_press(&ed, 4, 0, 0);
+    editor_release(&ed, 4, 0, 0);
+    static const char *const want[] = {
+        "000000000", "000000000", "001111100", "010000010", "100000001",
+    };
+    expect("curve", want);
+    check("curve", gesso_undo(&doc) == 1, "one step");
+    check("curve", gesso_undo(&doc) == 0, "only one");
+
+    editor_press(&ed, 0, 1, 0);
+    editor_drag(&ed, 8, 1, 0);
+    editor_release(&ed, 8, 1, 0);
+    editor_tool(&ed, TOOL_PENCIL);
+    static const char *const straight[] = {
+        "000000000", "111111111", "000000000", "000000000", "000000000",
+    };
+    expect("curve unbent", straight);
+}
+
 static void test_mirror(void) {
     fresh(5, 3);
     ed.mirror_x = 1;
@@ -163,6 +221,29 @@ static void test_select_move(void) {
     check("click outside", !doc.selected, "deselects");
 }
 
+static void test_lasso(void) {
+    fresh(4, 3);
+    (void)gesso_rect_draw(&doc, 0, 0, 3, 2, 4, 1);
+    (void)gesso_pixel(&doc, 2, 2, 7);
+    editor_tool(&ed, TOOL_LASSO);
+    editor_press(&ed, 0, 0, 0);
+    editor_drag(&ed, 2, 0, 0);
+    editor_release(&ed, 0, 2, 0);
+    check("lasso", doc.selected && doc.masked, "drag selects");
+    editor_press(&ed, 2, 2, 0);
+    editor_release(&ed, 2, 2, 0);
+    check("lasso", !doc.selected, "a click outside the path, inside its box, deselects");
+
+    editor_press(&ed, 0, 0, 0);
+    editor_drag(&ed, 2, 0, 0);
+    editor_release(&ed, 0, 2, 0);
+    editor_press(&ed, 0, 0, 0);
+    editor_release(&ed, 1, 0, 0);
+    editor_tool(&ed, TOOL_PENCIL);
+    static const char *const want[] = {"0444", "0444", "0474"};
+    expect("lasso moves only what the path encloses", want);
+}
+
 static void test_eraser(void) {
     fresh(3, 1);
     (void)gesso_line(&doc, 0, 0, 2, 0, 7);
@@ -187,11 +268,14 @@ static void test_cancel(void) {
 int main(void) {
     test_pixel_perfect();
     test_brush_skips_pixel_perfect();
+    test_polygon();
+    test_curve();
     test_mirror();
     test_shape_preview();
     test_constrain();
     test_picker();
     test_select_move();
+    test_lasso();
     test_eraser();
     test_cancel();
     if (failures == 0) {
