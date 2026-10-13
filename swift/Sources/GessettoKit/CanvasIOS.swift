@@ -62,7 +62,9 @@
       hold.delegate = self
       addGestureRecognizer(hold)
       addGestureRecognizer(UIHoverGestureRecognizer(target: self, action: #selector(hovered(_:))))
-      if UIPencilInteraction.prefersPencilOnlyDrawing {
+      if UserDefaults.standard.object(forKey: Editor.fingerKey) == nil
+        && UIPencilInteraction.prefersPencilOnlyDrawing
+      {
         editor.fingerDraws = false
       }
     }
@@ -119,10 +121,6 @@
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
       becomeFirstResponder()
       guard touch == nil, let t = touches.first else { return }
-      if t.type == .pencil && !Editor.pencilSeen {
-        Editor.pencilSeen = true
-        editor.fingerDraws = false
-      }
       editor.quickPalette = nil
       touch = t
       let secondary = event?.buttonMask.contains(.secondary) ?? false

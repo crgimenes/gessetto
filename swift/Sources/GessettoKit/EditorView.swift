@@ -17,6 +17,14 @@ public struct EditorView: View {
 
   public var body: some View {
     VStack(spacing: 0) {
+      #if os(iOS)
+        // Out of the navigation bar, where the title's rename menu takes the
+        // taps.
+        ToolPicker(editor: editor)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 6)
+        Divider()
+      #endif
       HStack(spacing: 0) {
         PalettePanel(editor: editor)
           .frame(width: PalettePanel.side * 6 + 10 + 16)
@@ -181,16 +189,9 @@ struct EditorToolbar: ToolbarContent {
   @Environment(\.undoManager) private var undoManager
 
   var body: some ToolbarContent {
-    ToolbarItem(placement: .principal) {
-      Picker("Tool", selection: $editor.tool) {
-        ForEach(Tool.allCases) { t in
-          Label(t.name, systemImage: t.symbol)
-            .help("\(t.name) (\(t.key.uppercased()))")
-            .tag(t)
-        }
-      }
-      .pickerStyle(.segmented)
-    }
+    #if os(macOS)
+      ToolbarItem(placement: .principal) { ToolPicker(editor: editor) }
+    #endif
     ToolbarItemGroup(placement: .primaryAction) {
       switch editor.tool {
       case .pencil:
@@ -253,6 +254,7 @@ struct EditorToolbar: ToolbarContent {
       toggle("Grid", "grid", $editor.grid)
       toggle("Onion Skin", "square.on.square.dashed", $editor.onion)
       #if os(iOS)
+        toggle("Draw with Finger", "hand.draw", $editor.fingerDraws)
         Button("Undo", systemImage: "arrow.uturn.backward") { undoManager?.undo() }
         Button("Redo", systemImage: "arrow.uturn.forward") { undoManager?.redo() }
         // What the Mac keeps in its menu bar, which the iPad shows only on
@@ -270,10 +272,6 @@ struct EditorToolbar: ToolbarContent {
             editor.paletteSheet = true
           }
           Button("New Tag…", systemImage: "tag") { editor.newTag() }
-          Divider()
-          Toggle(isOn: $editor.fingerDraws) {
-            Label("Draw with Finger", systemImage: "hand.point.up.left")
-          }
         } label: {
           Label("More", systemImage: "ellipsis.circle")
         }
@@ -285,6 +283,23 @@ struct EditorToolbar: ToolbarContent {
     Toggle(isOn: on) { Label(title, systemImage: symbol) }
       .toggleStyle(.button)
       .help(title)
+  }
+}
+
+struct ToolPicker: View {
+  @Bindable var editor: Editor
+
+  var body: some View {
+    Picker("Tool", selection: $editor.tool) {
+      ForEach(Tool.allCases) { t in
+        // A segment on the iPad shows a Label's title only; the icon fits.
+        Image(systemName: t.symbol)
+          .accessibilityLabel(t.name)
+          .help("\(t.name) (\(t.key.uppercased()))")
+          .tag(t)
+      }
+    }
+    .pickerStyle(.segmented)
   }
 }
 

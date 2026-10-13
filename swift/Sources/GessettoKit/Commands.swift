@@ -102,12 +102,16 @@ public struct GessettoScene: Scene {
   public init() {}
 
   public var body: some Scene {
-    DocumentGroup(newDocument: { GessoDocument() }) { file in
-      EditorView(document: file.document, fileURL: file.fileURL)
-    }
-    .commands { GessettoCommands() }
     #if os(macOS)
+      DocumentGroup(newDocument: { GessoDocument() }) { file in
+        EditorView(document: file.document, fileURL: file.fileURL)
+      }
+      .commands { GessettoCommands() }
       .defaultSize(width: 1000, height: 720)
+    #else
+      // The iPad opens on a blank canvas, not the document browser.
+      WindowGroup { WorkspaceView() }
+        .commands { GessettoCommands() }
     #endif
   }
 }

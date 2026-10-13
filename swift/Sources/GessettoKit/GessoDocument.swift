@@ -14,9 +14,10 @@ public final class GessoDocument: ReferenceFileDocument, @unchecked Sendable {
   private let isNew: Bool
   @MainActor public private(set) lazy var editor = Editor(sketch: sketch, isNew: isNew)
 
-  public init() {
+  /// A blank image; asksSize puts the canvas size question up first.
+  public init(asksSize: Bool = true) {
     sketch = Sketch()
-    isNew = true
+    isNew = asksSize
   }
 
   public init(sketch: Sketch) {

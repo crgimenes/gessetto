@@ -59,6 +59,11 @@ public final class Sketch: @unchecked Sendable {
     }
   }
 
+  /// Whether the image differs from where markSaved left it (a new or
+  /// just-read image is clean).
+  public var dirty: Bool { gst_dirty(g) != 0 }
+  public func markSaved() { gst_mark_saved(g) }
+
   public func gesso() throws -> Data {
     try Sketch.scratch.withLock {
       var n = 0

@@ -34,8 +34,6 @@
 	<false/>
 	<key>UILaunchScreen</key>
 	<dict/>
-	<key>UISupportsDocumentBrowser</key>
-	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

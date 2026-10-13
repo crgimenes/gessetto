@@ -476,6 +476,14 @@ int gst_can_redo(const gst *g) {
     return g->doc.top != g->doc.end && !g->doc.floating;
 }
 
+int gst_dirty(const gst *g) {
+    return gesso_dirty(&g->doc);
+}
+
+void gst_mark_saved(gst *g) {
+    gesso_mark_saved(&g->doc);
+}
+
 static int ok(gesso_status st) {
     return st == GESSO_OK;
 }

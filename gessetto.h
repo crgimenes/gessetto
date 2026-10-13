@@ -141,6 +141,9 @@ int gst_new_step(gst *g);
 int gst_undo(gst *g);
 int gst_redo(gst *g);
 int gst_can_redo(const gst *g);
+/* Whether the image differs from where gst_mark_saved left it. */
+int gst_dirty(const gst *g);
+void gst_mark_saved(gst *g);
 
 /* Edits; each returns 1, or 0 when it did nothing (no selection, a full
    palette, a value out of range). */

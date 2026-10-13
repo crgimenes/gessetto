@@ -168,10 +168,13 @@ public final class Editor {
   /// previous" goes.
   var previousTool = Tool.pencil
 
-  /// Whether a finger draws on the iPad. Once a Pencil touches the canvas the
-  /// finger moves the view instead, until turned back on.
-  public var fingerDraws = true
-  static var pencilSeen = false
+  /// Whether a finger draws on the iPad (two fingers always move the view);
+  /// kept between launches. Until first set, the system's "Only Draw with
+  /// Apple Pencil" decides.
+  public var fingerDraws = UserDefaults.standard.object(forKey: Editor.fingerKey) as? Bool ?? true {
+    didSet { UserDefaults.standard.set(fingerDraws, forKey: Editor.fingerKey) }
+  }
+  static let fingerKey = "fingerDraws"
 
   /// Where the Pencil asked for the quick palette (tools and colors), in the
   /// canvas's coordinates; nil when it is closed.
