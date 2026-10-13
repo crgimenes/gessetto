@@ -1,0 +1,24 @@
+; gesso image: index 0 is transparent, the palette starts at 01
+(gesso 1 10 5)
+(palette
+  "#000000" ; 01
+  "#111111" ; 02
+  "#222222" ; 03
+  "#333333" ; 04
+  "#444444" ; 05
+  "#555555" ; 06
+  "#666666" ; 07
+  "#777777" ; 08
+  "#999999" ; 09
+  "#aaaaaa" ; 0a
+  "#bbbbbb" ; 0b
+  "#cccccc" ; 0c
+  "#dddddd" ; 0d
+  "#eeeeee" ; 0e
+  "#ffffff") ; 0f
+(frame 100
+  "01020304050607080009"
+  "040506070800090a0b0c"
+  "070800090a0b0c0d0e0f"
+  "090a0b0c0d0e0f010203"
+  "0c0d0e0f010203040506")

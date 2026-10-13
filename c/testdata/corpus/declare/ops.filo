@@ -1,0 +1,7 @@
+; A file's own form: what an ops script can also start with.
+(gesso 1 2 2)
+(palette "#112233" "#AABBCC")
+(frame 80 "0102" "0200")
+(frame 120 "0000" "0101")
+(tag "blink" 0 1)
+(line 0 0 1 1 2)

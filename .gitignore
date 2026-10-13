@@ -39,3 +39,7 @@ TODO.md
 dist/
 release.sh
 .DS_Store
+
+# C build output
+c/build/
+c/testdata/corpus/*/got.gesso

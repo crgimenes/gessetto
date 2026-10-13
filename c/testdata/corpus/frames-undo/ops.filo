@@ -1,0 +1,10 @@
+; Frame edits are steps like any other.
+(new 2 1)
+(pixel 0 0 9)
+(frame-add)
+(pixel 1 0 12)
+(frame-delete)
+(undo)
+(undo)
+(if (not (= (undo) #t)) (error "frame-add must undo"))
+(redo)

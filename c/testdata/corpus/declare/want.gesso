@@ -1,0 +1,12 @@
+; gesso image: index 0 is transparent, the palette starts at 01
+(gesso 1 2 2)
+(palette
+  "#112233" ; 01
+  "#aabbcc") ; 02
+(frame 80
+  "0202"
+  "0202")
+(frame 120
+  "0000"
+  "0101")
+(tag "blink" 0 1)

@@ -1,0 +1,44 @@
+# Draws, adds a frame and a tag, moves a selection, saves: build/ui-basic.gesso
+# must equal basic.gesso. Coordinates assume a 2x screen (960x640 points).
+10 down 104 1220
+11 up 104 1220
+12 down 564 242
+13 move 660 242
+14 move 756 242
+15 move 756 338
+16 move 756 434
+17 up 756 434
+18 key r
+19 down 296 28
+20 up 296 28
+21 down 232 1220
+22 up 232 1220
+23 down 852 530
+24 move 996 602
+25 move 1092 674
+26 up 1092 674
+28 menu 17
+29 menu 30
+30 key o
+31 down 136 28
+32 up 136 28
+33 down 104 1220
+34 up 104 1220
+35 down 612 674
+36 move 708 770
+37 move 804 866
+38 up 804 866
+39 menu 23
+40 alert 103 0 walk 1-2
+42 menu 20
+43 key m
+44 down 828 506
+45 move 1116 698
+46 up 1116 698
+47 down 948 578
+48 move 948 386
+49 move 948 290
+50 up 948 290
+52 menu 4
+53 panel 201 build/ui-basic.gesso
+85 quit

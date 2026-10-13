@@ -1,0 +1,6 @@
+(gesso 1 3 1)
+(palette "#000000" "#ffffff")
+(frame 100 "000102")
+(color 2 "#ff0000")
+(color 3 "#00ff00")
+(pixel 0 0 3)
