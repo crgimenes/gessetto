@@ -18,6 +18,20 @@ public enum Tool: Int, CaseIterable, Identifiable, Sendable {
 
   var key: Character { Array("beginromadcqt")[rawValue] }
 
+  /// How the tools that take more than one gesture are used, for the status
+  /// bar.
+  var hint: String? {
+    switch self {
+    case .polygon:
+      "Tap each corner; tap the first one again, double-tap or press Done to close."
+    case .curve: "Drag to lay the line, then drag again to bend it."
+    case .select: "Drag to select; drag inside the selection to move it."
+    case .lasso: "Draw around what to select; drag inside it to move it."
+    case .text: "Tap where the text goes; drag it into place before it lands."
+    default: nil
+    }
+  }
+
   var symbol: String {
     [
       "pencil", "eraser", "drop.fill", "eyedropper", "line.diagonal", "rectangle", "circle",

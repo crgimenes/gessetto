@@ -17,14 +17,12 @@ public struct EditorView: View {
 
   public var body: some View {
     VStack(spacing: 0) {
-      #if os(iOS)
-        // Out of the navigation bar, where the title's rename menu takes the
-        // taps.
-        ToolPicker(editor: editor)
-          .padding(.horizontal, 8)
-          .padding(.vertical, 6)
-        Divider()
-      #endif
+      // Not in the toolbar: on the iPad the title's rename menu takes the
+      // taps there, and the Mac keeps the same layout.
+      ToolPicker(editor: editor)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+      Divider()
       HStack(spacing: 0) {
         PalettePanel(editor: editor)
           .frame(width: PalettePanel.side * 6 + 10 + 16)
@@ -189,10 +187,12 @@ struct EditorToolbar: ToolbarContent {
   @Environment(\.undoManager) private var undoManager
 
   var body: some ToolbarContent {
-    #if os(macOS)
-      ToolbarItem(placement: .principal) { ToolPicker(editor: editor) }
-    #endif
     ToolbarItemGroup(placement: .primaryAction) {
+      // Without a keyboard, the only way to end a polygon or curve.
+      if editor.shapeOpen {
+        Button("Done", systemImage: "checkmark") { editor.finishShape() }
+        Button("Cancel", systemImage: "xmark") { editor.cancelShape() }
+      }
       switch editor.tool {
       case .pencil:
         toggle("Pixel Perfect", "square.grid.3x3.middle.filled", $editor.pixelPerfect)
@@ -312,6 +312,10 @@ struct StatusBar: View {
     HStack(spacing: 16) {
       Text("\(sketch.width) × \(sketch.height)")
       Text("Frame \(sketch.frame + 1) of \(sketch.frames)")
+      if let hint = editor.tool.hint {
+        Text(hint)
+          .lineLimit(1)
+      }
       Spacer()
       if let c = editor.cursor {
         let i = Int(gst_index_at(editor.sketch.g, Int32(c.x), Int32(c.y)))
