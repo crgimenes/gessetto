@@ -28,7 +28,9 @@ final class CanvasCore {
 
   // MARK: pointer
 
-  func press(_ p: CGPoint, secondary: Bool, pan: Bool) {
+  /// Option (alt) with a drawing tool picks the color instead, as the
+  /// picker would, without leaving the tool.
+  func press(_ p: CGPoint, secondary: Bool, pan: Bool, alt: Bool = false) {
     if pan || spaceHeld {
       panning = true
       panFrom = p
@@ -36,6 +38,10 @@ final class CanvasCore {
       return
     }
     let q = editor.imagePoint(p)
+    if alt && editor.tool != .select && editor.tool != .picker {
+      editor.pick(x: q.x, y: q.y, secondary: secondary)
+      return
+    }
     drawing = true
     gst_press(g, Int32(clamping: q.x), Int32(clamping: q.y), secondary ? 1 : 0)
     editor.redraw()
@@ -79,6 +85,7 @@ final class CanvasCore {
   func hover(_ p: CGPoint?) {
     guard let p else {
       editor.cursor = nil
+      editor.redraw()
       return
     }
     let q = editor.imagePoint(p)
@@ -86,6 +93,7 @@ final class CanvasCore {
     let shown = inside ? q : nil
     if editor.cursor?.x != shown?.x || editor.cursor?.y != shown?.y {
       editor.cursor = shown
+      editor.redraw()
     }
   }
 
@@ -100,20 +108,18 @@ final class CanvasCore {
     editor.redraw()
   }
 
-  private var pinch: CGFloat = 0
+  private var pinchAt = CGPoint.zero
 
-  /// Magnification in the trackpad's units: each 0.25 is one zoom step.
-  func magnify(_ amount: CGFloat, at p: CGPoint) {
-    pinch += amount
-    while abs(pinch) >= 0.25 {
-      let dir = pinch > 0 ? 1 : -1
-      pinch -= CGFloat(dir) * 0.25
-      editor.zoom(by: dir, at: p)
-    }
+  /// A pinch step: the zoom times factor, following the fingers.
+  func magnify(by factor: CGFloat, at p: CGPoint) {
+    pinchAt = p
+    editor.zoom(to: editor.zoom * factor, at: p)
   }
 
+  /// At the end of a pinch the zoom settles on a whole number, where every
+  /// image pixel has the same size on screen.
   func endMagnify() {
-    pinch = 0
+    editor.zoom(to: editor.zoom.rounded(), at: pinchAt)
   }
 
   // MARK: keys
@@ -151,6 +157,10 @@ final class CanvasCore {
     }
     switch c {
     case "x": editor.swapColors()
+    case "-": editor.brushSize -= 1
+    case "=": editor.brushSize += 1
+    case "[": editor.setFg((editor.fg + editor.sketch.colors - 1) % editor.sketch.colors)
+    case "]": editor.setFg((editor.fg + 1) % editor.sketch.colors)
     case ",": editor.step(frames: -1)
     case ".": editor.step(frames: 1)
     case "p": editor.playing.toggle()
@@ -168,11 +178,13 @@ final class CanvasCore {
     ctx.setFillColor(background)
     ctx.fill(CGRect(origin: .zero, size: size))
     let sketch = editor.sketch
-    let z = CGFloat(editor.zoom)
+    let z = editor.zoom
     let rect = CGRect(
       x: editor.pan.x, y: editor.pan.y, width: CGFloat(sketch.width) * z,
       height: CGFloat(sketch.height) * z)
-    if let image = sketch.image(frame: sketch.frame, zoom: editor.zoom, onion: editor.onion) {
+    if let image = sketch.image(
+      frame: sketch.frame, zoom: Int(editor.zoom.rounded()), onion: editor.onion)
+    {
       ctx.saveGState()
       ctx.interpolationQuality = .none
       ctx.translateBy(x: 0, y: rect.minY + rect.maxY)
@@ -215,6 +227,19 @@ final class CanvasCore {
         phase: CGFloat(ants) * 2 * hair, lengths: [4 * hair * scale, 4 * hair * scale])
       ctx.stroke(box)
       ctx.setLineDash(phase: 0, lengths: [])
+    }
+    // The pixel under the pointer, outlined to show where the tool lands.
+    if let c = editor.cursor, !panning, !spaceHeld {
+      let n = editor.usesBrush ? editor.brushSize : 1
+      let lo = CGFloat((n - 1) / 2)
+      let cell = CGRect(
+        x: rect.minX + (CGFloat(c.x) - lo) * z, y: rect.minY + (CGFloat(c.y) - lo) * z,
+        width: z * CGFloat(n), height: z * CGFloat(n))
+      ctx.setLineWidth(hair)
+      ctx.setStrokeColor(CGColor(gray: 0, alpha: 0.8))
+      ctx.stroke(cell.insetBy(dx: hair / 2, dy: hair / 2))
+      ctx.setStrokeColor(CGColor(gray: 1, alpha: 0.8))
+      ctx.stroke(cell.insetBy(dx: hair * 1.5, dy: hair * 1.5))
     }
   }
 }

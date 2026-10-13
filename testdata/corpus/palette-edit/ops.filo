@@ -1,0 +1,11 @@
+; Worked by hand from the PICO-8 colors at 1..16:
+;   pixels 2 3 5 (#1d2b53 #7e2553 #ab5236)
+;   color-move 5 2  -> #ab5236 at 2, 2..4 shift up: pixels 3 4 2
+;   color-delete 4  -> #7e2553 goes; nearest left is #5f574f (6, then 5)
+;                      pixels 3 5 2
+(new 3 1)
+(pixel 0 0 2)
+(pixel 1 0 3)
+(pixel 2 0 5)
+(color-move 5 2)
+(color-delete 4)

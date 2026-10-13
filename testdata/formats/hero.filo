@@ -1,0 +1,9 @@
+; A two-frame walk with a tag: what a game gets from gessetto.
+(new 4 3)
+(pixel 0 0 8)
+(line 1 2 3 2 12)
+(duration 0 120)
+(frame-add)
+(pixel 3 0 9)
+(duration 1 80)
+(tag "walk" 0 1 "pingpong")

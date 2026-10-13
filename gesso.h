@@ -45,7 +45,16 @@ typedef enum {
     GESSO_ERR_NO_TAG,
     GESSO_ERR_NO_SELECTION,
     GESSO_ERR_CLIPBOARD,
+    GESSO_ERR_TAG_DIRECTION,
 } gesso_status;
+
+/* How a tag's frames play. */
+typedef enum {
+    GESSO_FORWARD,
+    GESSO_REVERSE,
+    GESSO_PINGPONG,
+    GESSO_DIRECTIONS,
+} gesso_direction;
 
 typedef struct {
     int32_t x;
@@ -58,6 +67,7 @@ typedef struct {
     char name[GESSO_TAG_NAME_MAX];
     uint32_t first;
     uint32_t last;
+    uint32_t direction; /* a gesso_direction */
 } gesso_tag;
 
 /* Frame f's pixels are width*height bytes at pixels + f*width*height. */
@@ -104,6 +114,10 @@ typedef struct {
     uint64_t floor; /* the state when no entry is left below top */
     uint64_t saved;
 
+    /* The pen: lines, the pencil and outlines stamp it at every point. */
+    uint32_t brush;
+    int brush_round;
+
     uint32_t stack[GESSO_FRAME_PIXELS];
 } gesso_doc;
 
@@ -122,6 +136,15 @@ uint8_t *gesso_frame_pixels(gesso_image *img, uint32_t frame);
 /* The index shown at (x, y) of the active frame, floating pixels included;
    0 outside. */
 uint8_t gesso_view(const gesso_doc *d, int32_t x, int32_t y);
+
+enum {
+    GESSO_BRUSH_MAX = 16,
+};
+
+/* The pen for lines, the pencil and outlines: size x size pixels, square or
+   round (fills and filled shapes do not use it). An even size reaches one
+   pixel further right and down than left and up. */
+void gesso_brush(gesso_doc *d, uint32_t size, int round);
 
 /* Pixel edits on the active frame. */
 gesso_status gesso_pixel(gesso_doc *d, int32_t x, int32_t y, uint8_t c);
@@ -162,10 +185,30 @@ gesso_status gesso_frame_duplicate(gesso_doc *d);
 gesso_status gesso_frame_delete(gesso_doc *d);
 gesso_status gesso_frame_move(gesso_doc *d, uint32_t from, uint32_t to);
 gesso_status gesso_frame_duration(gesso_doc *d, uint32_t frame, uint32_t ms);
-gesso_status gesso_tag_set(gesso_doc *d, const char *name, uint32_t first, uint32_t last);
+/* The same on frames first..last, both included, as one undo step. Copies
+   go after last and the active frame becomes the first copy; a move puts
+   the first of them at to. */
+gesso_status gesso_frames_duplicate(gesso_doc *d, uint32_t first, uint32_t last);
+/* count frames of indices (width * height each) and their durations go in
+   after the active frame, the first of them active: a paste of frames. */
+gesso_status gesso_frames_insert(gesso_doc *d, const uint8_t *px, const uint32_t *duration,
+                                 uint32_t count);
+gesso_status gesso_frames_delete(gesso_doc *d, uint32_t first, uint32_t last);
+gesso_status gesso_frames_move(gesso_doc *d, uint32_t first, uint32_t last, uint32_t to);
+gesso_status gesso_frames_duration(gesso_doc *d, uint32_t first, uint32_t last, uint32_t ms);
+gesso_status gesso_tag_set(gesso_doc *d, const char *name, uint32_t first, uint32_t last,
+                           uint32_t direction);
 gesso_status gesso_tag_delete(gesso_doc *d, const char *name);
 /* index == ncolors appends a color. */
 gesso_status gesso_color_set(gesso_doc *d, uint32_t index, uint32_t rgb);
+/* Remove a color: its pixels take the nearest color left. Move one: pixels
+   keep their colors, only the indices change. Both remap the clipboard. */
+gesso_status gesso_color_delete(gesso_doc *d, uint32_t index);
+/* count colors (0xRRGGBB) become the palette at 1..count. With match every
+   pixel takes the nearest new color; without, pixels keep their index (the
+   art recolored) and only those past count look for the nearest. */
+gesso_status gesso_palette_load(gesso_doc *d, const uint32_t *colors, uint32_t count, int match);
+gesso_status gesso_color_move(gesso_doc *d, uint32_t from, uint32_t to);
 
 /* Name check shared with the file reader: 1 to 31 printable ASCII bytes,
    no quote or backslash. */

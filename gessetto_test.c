@@ -156,6 +156,19 @@ static void test_color_live(void) {
     after(g, &m);
     CHECK(m.undo == 3);
 
+    /* Moving a color carries the foreground with it; deleting one keeps
+       the pixels looking alike. */
+    gst_set_fg(g, 5);
+    CHECK(gst_color_move(g, 5, 2) && gst_fg(g) == 2);
+    after(g, &m);
+    CHECK(gst_color_delete(g, 2) && gst_fg(g) == 1);
+    after(g, &m);
+    CHECK(!gst_color_delete(g, 0) && !gst_color_move(g, 1, 99));
+    CHECK(m.undo == 5);
+    undo(g, &m);
+    undo(g, &m);
+    CHECK(gst_color(g, 5) == 0xffab5236u);
+
     /* Appending a color, and undoing it, leaves the tools a real color. */
     uint32_t n = gst_colors(g);
     CHECK(gst_color_set(g, n, 0xabcdef));
@@ -190,6 +203,70 @@ static void test_import(gst *g) {
     CHECK(gst_undo(g) && gst_width(g) == w);
 }
 
+/* A 5 x 2 sheet of 2 x 2 tiles: two frames, the odd column left out. */
+static void test_sheet(void) {
+    gst *g = fresh();
+    char err[GST_ERROR_MAX];
+    const uint32_t A = 0xff112233u;
+    const uint32_t B = 0xff445566u;
+    const uint32_t sheet[10] = {A, 0, B, B, A, 0, A, 0x10ffffffu, B, A};
+    (void)gst_new_step(g);
+    CHECK(gst_import_sheet(g, sheet, 5, 2, 2, 2, err));
+    CHECK(gst_new_step(g));
+    CHECK(gst_width(g) == 2 && gst_height(g) == 2 && gst_frames(g) == 2);
+    CHECK(gst_colors(g) == 3 && gst_color(g, 1) == A && gst_color(g, 2) == B);
+    CHECK(gst_index_at(g, 0, 0) == 1 && gst_index_at(g, 1, 0) == 0 && gst_index_at(g, 1, 1) == 1);
+    CHECK(gst_frame_select(g, 1));
+    CHECK(gst_index_at(g, 0, 0) == 2 && gst_index_at(g, 1, 1) == 2);
+    CHECK(!gst_import_sheet(g, sheet, 5, 2, 3, 3, err));
+    CHECK(!gst_import_sheet(g, sheet, 5, 2, 0, 2, err));
+    CHECK(gst_undo(g) && gst_width(g) == 32);
+    free(g);
+}
+
+/* Frames pasted from colors land after the active one, colors matched. */
+static void test_frames_paste(void) {
+    gst *g = fresh();
+    uint32_t px[32 * 32 * 2] = {0};
+    px[0] = 0xffff004du;
+    px[32 * 32 + 1] = 0xfffe014cu;
+    const uint32_t ms[2] = {70, 80};
+    (void)gst_new_step(g);
+    CHECK(gst_frames_paste(g, px, ms, 2));
+    CHECK(gst_new_step(g));
+    CHECK(gst_frames(g) == 3 && gst_frame(g) == 1);
+    CHECK(gst_index_at(g, 0, 0) == 9 && gst_duration(g, 1) == 70 && gst_duration(g, 2) == 80);
+    CHECK(gst_frame_select(g, 2) && gst_index_at(g, 1, 0) == 9);
+    const uint32_t bad[1] = {0};
+    CHECK(!gst_frames_paste(g, px, bad, 1));
+    CHECK(gst_undo(g) && gst_frames(g) == 1);
+    free(g);
+}
+
+/* Red (9), blue (13) and black (1) under a palette of blue and red: with
+   match each takes its nearest; without, black keeps index 1 (blue now)
+   and the others, past the palette, still take their nearest. */
+static void test_palette_load(void) {
+    gst *g = fresh();
+    manager m = {0};
+    gst_set_fg(g, 9);
+    stroke(g, &m, 0, 0, 0, 0);
+    gst_set_fg(g, 13);
+    stroke(g, &m, 1, 0, 1, 0);
+    gst_set_fg(g, 1);
+    stroke(g, &m, 2, 0, 2, 0);
+    const uint32_t two[2] = {0x0000ff, 0xff0000};
+    CHECK(gst_palette_load(g, two, 2, 1));
+    CHECK(gst_colors(g) == 3 && gst_index_at(g, 0, 0) == 2 && gst_index_at(g, 1, 0) == 1);
+    CHECK(gst_index_at(g, 2, 0) == 1);
+    CHECK(gst_fg(g) < gst_colors(g));
+    CHECK(gst_undo(g));
+    CHECK(gst_palette_load(g, two, 2, 0));
+    CHECK(gst_index_at(g, 0, 0) == 2 && gst_index_at(g, 1, 0) == 1 && gst_index_at(g, 2, 0) == 1);
+    CHECK(!gst_palette_load(g, two, 0, 0));
+    free(g);
+}
+
 static void test_files(void) {
     gst *g = fresh();
     manager m = {0};
@@ -197,8 +274,8 @@ static void test_files(void) {
     gst_set_fg(g, 12);
     stroke(g, &m, 0, 0, 31, 31);
     CHECK(gst_frame_add(g));
-    CHECK(gst_tag_set(g, "walk", 0, 1, err));
-    CHECK(!gst_tag_set(g, "bad\"name", 0, 1, err));
+    CHECK(gst_tag_set(g, "walk", 0, 1, 2, err));
+    CHECK(!gst_tag_set(g, "bad\"name", 0, 1, 0, err));
     CHECK(strlen(err) > 0);
 
     /* A floating selection is saved where it floats, and keeps floating. */
@@ -226,6 +303,8 @@ static void test_files(void) {
     CHECK(gst_read(h, copy, len, err));
     CHECK(gst_frames(h) == 2 && gst_tags(h) == 1);
     CHECK(strcmp(gst_tag_name(h, 0), "walk") == 0 && gst_tag_last(h, 0) == 1);
+    CHECK(gst_tag_direction(h, 0) == 2);
+    CHECK(!gst_tag_set(h, "walk", 0, 1, 3, err));
     CHECK(pixel(h, 11, 1) == (gst_color(h, 12) | 0xff000000u));
     CHECK(pixel(h, 1, 1) != (gst_color(h, 12) | 0xff000000u));
 
@@ -259,6 +338,9 @@ static void test_clipboard_and_render(void) {
     CHECK(pixel(g, 0, 1) == 0xffff004du);
     gst_clip_argb(g, argb, &w, &h);
     CHECK(w == 2 && h == 2 && argb[0] == 0 && argb[3] == 0);
+    CHECK(gst_index_at(g, 1, 0) == 9 && gst_index_at(g, 0, 0) == 0 && gst_index_at(g, -1, 0) == 0);
+    gst_frame_argb(g, 0, argb);
+    CHECK(argb[0] == 0 && argb[1] == 0xffff004du && argb[32] == 0xffff004du && argb[33] == 0);
     CHECK(!gst_clip_from_argb(g, in, 0, 2));
 
     /* The checkerboard is 8 points a square, and onion skin shows the
@@ -272,6 +354,16 @@ static void test_clipboard_and_render(void) {
     uint32_t plain = buf[1];
     gst_render(g, buf, 1, 8, 1);
     CHECK(buf[1] != plain && buf[5] == plain);
+    uint32_t previous = buf[1];
+    CHECK(gst_frame_select(g, 0));
+    gst_render(g, buf, 0, 8, 1);
+    CHECK(buf[1] == 0xffff004du);
+    CHECK(gst_frame_select(g, 1));
+    CHECK(gst_clip_from_argb(g, in, 2, 2) && gst_paste(g, 4, 0) && gst_deselect(g));
+    gst_render(g, buf, 0, 8, 1);
+    CHECK(buf[5] != plain && buf[5] != previous);
+    gst_render(g, buf, 0, 8, 0);
+    CHECK(buf[5] == plain);
     free(g);
 }
 
@@ -279,6 +371,9 @@ int main(void) {
     test_steps();
     test_color_live();
     test_files();
+    test_sheet();
+    test_frames_paste();
+    test_palette_load();
     test_clipboard_and_render();
     if (failures > 0) {
         fprintf(stderr, "%d failures\n", failures);

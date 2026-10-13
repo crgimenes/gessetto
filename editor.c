@@ -68,7 +68,7 @@ static void paint(editor *e, int32_t x, int32_t y) {
     for (int i = 0; i < n; i++) {
         (void)gesso_pixel(e->doc, mx[i], my[i], e->color);
     }
-    if (!e->pixel_perfect || e->tool != TOOL_PENCIL) {
+    if (!e->pixel_perfect || e->tool != TOOL_PENCIL || e->doc->brush > 1) {
         return;
     }
     /* An L corner: the stroke went a -> b -> (x, y) with a and (x, y)

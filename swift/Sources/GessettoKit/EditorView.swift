@@ -7,8 +7,12 @@ public struct EditorView: View {
   @Bindable var editor: Editor
   @Environment(\.undoManager) private var undoManager
 
-  public init(document: GessoDocument) {
+  /// The document's name without extension, for exported files.
+  let name: String
+
+  public init(document: GessoDocument, fileURL: URL?) {
     editor = document.editor
+    name = fileURL?.deletingPathExtension().lastPathComponent ?? "untitled"
   }
 
   public var body: some View {
@@ -18,6 +22,7 @@ public struct EditorView: View {
           .frame(width: 136)
         Divider()
         CanvasView(editor: editor)
+          .clipped()
       }
       Divider()
       FramesStrip(editor: editor)
@@ -37,9 +42,42 @@ public struct EditorView: View {
     }
     .onChange(of: undoManager) { editor.undo = $1 }
     .sheet(isPresented: $editor.sizing) { SizeSheet(editor: editor) }
-    .sheet(isPresented: $editor.newTag) { TagSheet(editor: editor) }
-    .fileImporter(isPresented: $editor.importing, allowedContentTypes: [.png]) { result in
-      importPNG(result)
+    .sheet(
+      isPresented: Binding(
+        get: { editor.tagSheet != nil }, set: { if !$0 { editor.tagSheet = nil } })
+    ) {
+      if let t = editor.tagSheet {
+        TagSheet(editor: editor, tag: t)
+      }
+    }
+    .sheet(isPresented: $editor.paletteSheet) {
+      PaletteSheet(editor: editor, loaded: editor.loadedPalette)
+    }
+    .sheet(isPresented: $editor.exporting) { ExportSheet(editor: editor, name: name) }
+    .fileExporter(
+      isPresented: Binding(
+        get: { editor.exportFile != nil }, set: { if !$0 { editor.exportFile = nil } }),
+      document: editor.exportFile, contentType: editor.exportFile?.type ?? .png,
+      defaultFilename: name
+    ) { result in
+      if case .failure(let e) = result {
+        editor.error = "Cannot export. \(e.localizedDescription)"
+      }
+    }
+    .fileImporter(
+      isPresented: Binding(
+        get: { editor.importing != nil }, set: { if !$0 { editor.importing = nil } }),
+      allowedContentTypes: editor.importing == .sheet
+        ? [.image] : editor.importing == .palette ? [.data] : [.png]
+    ) { result in
+      importFile(result, as: editor.importing ?? .png)
+    }
+    .sheet(
+      isPresented: Binding(get: { editor.sheet != nil }, set: { if !$0 { editor.sheet = nil } })
+    ) {
+      if let s = editor.sheet {
+        SheetImport(editor: editor, sheet: s)
+      }
     }
     .alert(
       "gessetto",
@@ -51,8 +89,9 @@ public struct EditorView: View {
     }
   }
 
-  /// A PNG replaces the image, its colors the palette; undo brings it back.
-  private func importPNG(_ result: Result<URL, Error>) {
+  /// A PNG replaces the image, its colors the palette; a sprite sheet asks
+  /// its frame size first. Undo brings the old image back.
+  private func importFile(_ result: Result<URL, Error>, as kind: Editor.Import) {
     do {
       let url = try result.get()
       let scoped = url.startAccessingSecurityScopedResource()
@@ -61,9 +100,61 @@ public struct EditorView: View {
           url.stopAccessingSecurityScopedResource()
         }
       }
-      editor.importPNG(try Data(contentsOf: url))
+      let data = try Data(contentsOf: url)
+      switch kind {
+      case .png: editor.importPNG(data)
+      case .sheet: editor.readSheet(data)
+      case .palette: editor.readPalette(data, name: url.deletingPathExtension().lastPathComponent)
+      }
     } catch {
-      editor.error = "Cannot import the PNG. \(error.localizedDescription)"
+      editor.error = "Cannot import. \(error.localizedDescription)"
+    }
+  }
+}
+
+/// The frame size for a sprite sheet, with how many frames it makes.
+struct SheetImport: View {
+  let editor: Editor
+  let sheet: Editor.Sheet
+  @State private var width = 16
+  @State private var height = 16
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    let frames = width > 0 && height > 0 ? (sheet.width / width) * (sheet.height / height) : 0
+    NavigationStack {
+      Form {
+        Section("Import Sprite Sheet") {
+          LabeledContent("Sheet") { Text(verbatim: "\(sheet.width) × \(sheet.height)") }
+          LabeledContent("Frame width") { number($width) }
+          LabeledContent("Frame height") { number($height) }
+          LabeledContent("Frames") { Text(verbatim: "\(frames)") }
+          Text(
+            "Frames are read left to right, top to bottom; the image is replaced (undo brings it back)."
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        }
+      }
+      .formStyle(.grouped)
+      .frame(minWidth: 320)
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Cancel") { dismiss() }
+        }
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Import") {
+            editor.importSheet(sheet, frameWidth: width, frameHeight: height)
+            dismiss()
+          }
+          .disabled(frames < 1 || frames > Int(GST_FRAMES_MAX))
+        }
+      }
+    }
+    .onAppear {
+      let side = min(sheet.width, sheet.height, Int(GST_SIDE_MAX))
+      width = side
+      height = side
     }
   }
 }
@@ -99,15 +190,51 @@ struct EditorToolbar: ToolbarContent {
       default:
         EmptyView()
       }
+      if editor.usesBrush {
+        Menu {
+          Picker("Size", selection: $editor.brushSize) {
+            ForEach(1...16, id: \.self) { Text(verbatim: "\($0) px").tag($0) }
+          }
+          Picker("Shape", selection: $editor.brushRound) {
+            Label("Square", systemImage: "square.fill").tag(false)
+            Label("Round", systemImage: "circle.fill").tag(true)
+          }
+        } label: {
+          Label(
+            "Pen \(editor.brushSize) px",
+            systemImage: editor.brushRound ? "circle.fill" : "square.fill")
+        }
+        .help("Pen size and shape (- and = change the size)")
+      }
       if editor.tool != .select && editor.tool != .picker {
         toggle(
           "Mirror X", "arrow.left.and.right.righttriangle.left.righttriangle.right", $editor.mirrorX
         )
         toggle("Mirror Y", "arrow.up.and.down.righttriangle.up.righttriangle.down", $editor.mirrorY)
       }
+      toggle("Grid", "grid", $editor.grid)
+      toggle("Onion Skin", "square.on.square.dashed", $editor.onion)
       #if os(iOS)
         Button("Undo", systemImage: "arrow.uturn.backward") { undoManager?.undo() }
         Button("Redo", systemImage: "arrow.uturn.forward") { undoManager?.redo() }
+        // What the Mac keeps in its menu bar, which the iPad shows only on
+        // request.
+        Menu {
+          Button("Export…", systemImage: "square.and.arrow.up") { editor.exporting = true }
+          Button("Import PNG…", systemImage: "photo") { editor.importing = .png }
+          Button("Import Sprite Sheet…", systemImage: "square.grid.3x3") {
+            editor.importing = .sheet
+          }
+          Divider()
+          Button("Canvas Size…", systemImage: "crop") { editor.sizing = true }
+          Button("Load Palette…", systemImage: "swatchpalette") {
+            editor.loadedPalette = nil
+            editor.paletteSheet = true
+          }
+          Button("New Tag…", systemImage: "tag") { editor.newTag() }
+        } label: {
+          Label("More", systemImage: "ellipsis.circle")
+        }
       #endif
     }
   }
@@ -130,9 +257,13 @@ struct StatusBar: View {
       Text("Frame \(sketch.frame + 1) of \(sketch.frames)")
       Spacer()
       if let c = editor.cursor {
-        Text("\(c.x), \(c.y)")
+        let i = Int(gst_index_at(editor.sketch.g, Int32(c.x), Int32(c.y)))
+        Text(
+          verbatim: i == 0
+            ? "\(c.x), \(c.y)  0 clear"
+            : "\(c.x), \(c.y)  \(i) " + String(format: "#%06x", editor.sketch.color(i) & 0xff_ffff))
       }
-      Text(verbatim: "\(editor.zoom * 100)%")
+      Text(verbatim: "\(Int((editor.zoom * 100).rounded()))%")
     }
     .font(.caption)
     .monospacedDigit()
@@ -180,33 +311,44 @@ struct SizeSheet: View {
   }
 }
 
+/// A new tag, or one edited: renaming replaces the old one.
 struct TagSheet: View {
   let editor: Editor
+  let tag: Sketch.Tag
   @State private var name = ""
   @State private var first = 1
   @State private var last = 1
+  @State private var direction = Sketch.Direction.forward
   @Environment(\.dismiss) private var dismiss
 
   var body: some View {
+    let isNew = tag.name.isEmpty
     NavigationStack {
       Form {
-        Section("New Tag") {
+        Section(isNew ? "New Tag" : "Edit Tag") {
           LabeledContent("Name") {
             TextField("Name", text: $name).labelsHidden().multilineTextAlignment(.trailing)
           }
           LabeledContent("First frame") { number($first) }
           LabeledContent("Last frame") { number($last) }
+          Picker("Direction", selection: $direction) {
+            ForEach(Sketch.Direction.allCases) { Text($0.title).tag($0) }
+          }
         }
       }
       .formStyle(.grouped)
-      .frame(minWidth: 280)
+      .frame(minWidth: 300)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") { dismiss() }
         }
         ToolbarItem(placement: .confirmationAction) {
-          Button("Add") {
-            editor.setTag(name, first: first - 1, last: last - 1)
+          Button(isNew ? "Add" : "OK") {
+            if editor.setTag(name, first: first - 1, last: last - 1, direction: direction),
+              !isNew, name != tag.name
+            {
+              editor.deleteTag(tag.name)
+            }
             dismiss()
           }
           .disabled(name.isEmpty)
@@ -214,8 +356,10 @@ struct TagSheet: View {
       }
     }
     .onAppear {
-      first = editor.sketch.frame + 1
-      last = editor.sketch.frames
+      name = tag.name
+      first = tag.first + 1
+      last = tag.last + 1
+      direction = tag.direction
     }
   }
 }

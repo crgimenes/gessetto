@@ -1,0 +1,5 @@
+; A round pen of 4 is the 4x4 square without its corners; an even size
+; reaches one further right and down: x and y 1..4 around (2, 2).
+(new 6 6)
+(brush 4 "round")
+(pixel 2 2 2)

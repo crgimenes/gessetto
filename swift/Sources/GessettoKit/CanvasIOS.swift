@@ -30,6 +30,7 @@
       core = CanvasCore(editor: editor)
       super.init(frame: .zero)
       contentMode = .redraw
+      clipsToBounds = true
       isMultipleTouchEnabled = true
       editor.redraw = { [weak self] in self?.refresh() }
 
@@ -102,7 +103,7 @@
       guard touch == nil, let t = touches.first else { return }
       touch = t
       let secondary = event?.buttonMask.contains(.secondary) ?? false
-      core.press(t.location(in: self), secondary: secondary, pan: false)
+      core.press(t.location(in: self), secondary: secondary, pan: false, alt: alt(event))
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -137,7 +138,7 @@
         takeOver()
         pinchAnchor = 1
       case .changed:
-        core.magnify(r.scale - pinchAnchor, at: r.location(in: self))
+        core.magnify(by: r.scale / pinchAnchor, at: r.location(in: self))
         pinchAnchor = r.scale
       default:
         core.endMagnify()

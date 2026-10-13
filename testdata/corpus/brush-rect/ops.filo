@@ -1,0 +1,5 @@
+; An outline with a pen of 2, which reaches one right and down of each
+; point: rows 1, 2, 4, 5 full from x 1 to 5, row 3 at x 1, 2, 4, 5.
+(new 6 6)
+(brush 2)
+(rect 1 1 4 4 3)

@@ -10,8 +10,13 @@ struct GessettoCommands: Commands {
 
   var body: some Commands {
     CommandGroup(after: .importExport) {
-      Button("Import PNG…") { editor?.importing = true }
+      Button("Import PNG…") { editor?.importing = .png }
         .keyboardShortcut("i", modifiers: [.command, .shift])
+        .disabled(editor == nil)
+      Button("Import Sprite Sheet…") { editor?.importing = .sheet }
+        .disabled(editor == nil)
+      Button("Export…") { editor?.exporting = true }
+        .keyboardShortcut("e", modifiers: [.command, .shift])
         .disabled(editor == nil)
     }
     CommandGroup(after: .pasteboard) {
@@ -36,6 +41,20 @@ struct GessettoCommands: Commands {
       }
       .disabled(editor == nil)
     }
+    CommandMenu("Colors") {
+      Group {
+        Button("Load Palette…") {
+          editor?.loadedPalette = nil
+          editor?.paletteSheet = true
+        }
+        Divider()
+        Button("Add Color") { editor?.addColor() }
+        Button("Delete Color") { editor.map { $0.deleteColor($0.fg) } }
+          .disabled(editor?.fg == 0)
+        Button("Swap Colors") { editor?.swapColors() }
+      }
+      .disabled(editor == nil)
+    }
     CommandMenu("Frame") {
       Group {
         Button("New Frame") { editor?.addFrame() }
@@ -44,10 +63,15 @@ struct GessettoCommands: Commands {
           .keyboardShortcut("d", modifiers: .option)
         Button("Delete Frame") { editor?.deleteFrame() }
         Divider()
+        Button("Copy Frames") { editor?.copyFrames() }
+          .keyboardShortcut("c", modifiers: .option)
+        Button("Paste Frames") { editor?.pasteFrames() }
+          .keyboardShortcut("v", modifiers: .option)
+        Divider()
         Button("Previous Frame") { editor?.step(frames: -1) }
         Button("Next Frame") { editor?.step(frames: 1) }
         Divider()
-        Button("New Tag…") { editor?.newTag = true }
+        Button("New Tag…") { editor?.newTag() }
         Divider()
         Button(editor?.playing == true ? "Stop" : "Play") { editor?.playing.toggle() }
       }
@@ -63,7 +87,7 @@ struct GessettoCommands: Commands {
       Divider()
       Toggle(
         "Grid",
-        isOn: Binding(get: { editor?.grid ?? false }, set: { _ in editor?.toggleGrid() })
+        isOn: Binding(get: { editor?.grid ?? false }, set: { editor?.grid = $0 })
       )
       .keyboardShortcut("'")
       Toggle(
@@ -79,7 +103,7 @@ public struct GessettoScene: Scene {
 
   public var body: some Scene {
     DocumentGroup(newDocument: { GessoDocument() }) { file in
-      EditorView(document: file.document)
+      EditorView(document: file.document, fileURL: file.fileURL)
     }
     .commands { GessettoCommands() }
     #if os(macOS)

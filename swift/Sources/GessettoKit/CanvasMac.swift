@@ -23,6 +23,7 @@
     init(editor: Editor) {
       core = CanvasCore(editor: editor)
       super.init(frame: .zero)
+      clipsToBounds = true
       editor.redraw = { [weak self] in self?.refresh() }
     }
 
@@ -79,7 +80,15 @@
     }
 
     override func resetCursorRects() {
-      addCursorRect(bounds, cursor: core.spaceHeld || core.panning ? .openHand : .crosshair)
+      let cursor: NSCursor
+      if core.panning {
+        cursor = .closedHand
+      } else if core.spaceHeld {
+        cursor = .openHand
+      } else {
+        cursor = ToolCursor.of(editor.tool)
+      }
+      addCursorRect(bounds, cursor: cursor)
     }
 
     // MARK: pointer
@@ -90,7 +99,8 @@
 
     override func mouseDown(with e: NSEvent) {
       window?.makeFirstResponder(self)
-      core.press(point(e), secondary: false, pan: false)
+      core.press(
+        point(e), secondary: false, pan: false, alt: e.modifierFlags.contains(.option))
     }
 
     override func mouseDragged(with e: NSEvent) {
@@ -105,7 +115,7 @@
 
     override func rightMouseDown(with e: NSEvent) {
       window?.makeFirstResponder(self)
-      core.press(point(e), secondary: true, pan: false)
+      core.press(point(e), secondary: true, pan: false, alt: e.modifierFlags.contains(.option))
     }
 
     override func rightMouseDragged(with e: NSEvent) { mouseDragged(with: e) }
@@ -123,7 +133,14 @@
 
     override func scrollWheel(with e: NSEvent) {
       if e.modifierFlags.contains(.command) {
-        core.magnify(e.scrollingDeltaY / (e.hasPreciseScrollingDeltas ? 100 : 4), at: point(e))
+        if !e.hasPreciseScrollingDeltas {
+          editor.zoom(by: e.scrollingDeltaY > 0 ? 1 : -1, at: point(e))
+          return
+        }
+        core.magnify(by: 1 + e.scrollingDeltaY / 100, at: point(e))
+        if e.phase == .ended || e.momentumPhase == .ended {
+          core.endMagnify()
+        }
         return
       }
       let k: CGFloat = e.hasPreciseScrollingDeltas ? 1 : 10
@@ -131,7 +148,7 @@
     }
 
     override func magnify(with e: NSEvent) {
-      core.magnify(e.magnification, at: point(e))
+      core.magnify(by: 1 + e.magnification, at: point(e))
       if e.phase == .ended || e.phase == .cancelled {
         core.endMagnify()
       }
@@ -207,6 +224,56 @@
       default:
         return true
       }
+    }
+  }
+
+  /// The tool's symbol as the pointer, outlined in white so it shows on
+  /// dark pixels, its hot spot where the tool acts.
+  @MainActor
+  enum ToolCursor {
+    private static var made: [Tool: NSCursor] = [:]
+
+    static func of(_ tool: Tool) -> NSCursor {
+      if let c = made[tool] {
+        return c
+      }
+      let c = make(tool) ?? .crosshair
+      made[tool] = c
+      return c
+    }
+
+    private static func make(_ tool: Tool) -> NSCursor? {
+      // Where the tool acts, as a fraction of the symbol's box from its
+      // top left: a pencil's tip, a drop's landing point.
+      let hot: CGPoint
+      switch tool {
+      case .pencil, .eraser, .picker: hot = CGPoint(x: 0.05, y: 0.95)
+      case .fill: hot = CGPoint(x: 0.5, y: 1)
+      default: return nil
+      }
+      let size = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+      guard
+        let black = NSImage(systemSymbolName: tool.symbol, accessibilityDescription: nil)?
+          .withSymbolConfiguration(size.applying(.init(paletteColors: [.black]))),
+        let white = NSImage(systemSymbolName: tool.symbol, accessibilityDescription: nil)?
+          .withSymbolConfiguration(size.applying(.init(paletteColors: [.white])))
+      else { return nil }
+      let pad: CGFloat = 2
+      let box = NSSize(width: black.size.width + pad * 2, height: black.size.height + pad * 2)
+      let image = NSImage(size: box, flipped: false) { _ in
+        for dx in [-1.0, 0, 1] {
+          for dy in [-1.0, 0, 1] where dx != 0 || dy != 0 {
+            white.draw(
+              at: NSPoint(x: pad + dx, y: pad + dy), from: .zero, operation: .sourceOver,
+              fraction: 1)
+          }
+        }
+        black.draw(at: NSPoint(x: pad, y: pad), from: .zero, operation: .sourceOver, fraction: 1)
+        return true
+      }
+      let spot = NSPoint(
+        x: pad + hot.x * black.size.width, y: pad + hot.y * black.size.height)
+      return NSCursor(image: image, hotSpot: spot)
     }
   }
 

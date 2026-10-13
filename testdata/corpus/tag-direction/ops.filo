@@ -1,0 +1,8 @@
+; Each direction once; forward is the default and is never written.
+(new 1 1)
+(frame-add)
+(frame-add)
+(tag "idle" 0 0)
+(tag "back" 0 2 "reverse")
+(tag "bounce" 1 2 "pingpong")
+(tag "same" 2 2 "forward")

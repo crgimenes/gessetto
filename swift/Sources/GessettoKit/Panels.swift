@@ -1,6 +1,12 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// The index a drag of this kind carries ("frame:3", "color:5").
+func dragged(_ items: [String], _ kind: String) -> Int? {
+  guard let s = items.first, s.hasPrefix(kind) else { return nil }
+  return Int(s.dropFirst(kind.count))
+}
+
 extension Color {
   init(rgb: UInt32) {
     self.init(
@@ -75,6 +81,17 @@ struct PalettePanel: View {
               .contextMenu {
                 Button("Use as Foreground") { editor.setFg(i) }
                 Button("Use as Background") { editor.setBg(i) }
+                Divider()
+                Button("Delete Color") { editor.deleteColor(i) }
+                  .disabled(i == 0)
+              }
+              .draggable("color:\(i)")
+              .dropDestination(for: String.self) { items, _ in
+                guard i > 0, let from = dragged(items, "color:"), from > 0, from != i else {
+                  return false
+                }
+                editor.moveColor(from, to: i)
+                return true
               }
               .help(i == 0 ? "Transparent" : String(format: "#%06x", sketch.color(i) & 0xff_ffff))
           }
@@ -99,6 +116,12 @@ struct PalettePanel: View {
         Button("Add Color", systemImage: "plus") { editor.addColor() }
           .labelStyle(.iconOnly)
           .help("Add a color like the foreground one")
+        Button("Load Palette", systemImage: "swatchpalette") {
+          editor.loadedPalette = nil
+          editor.paletteSheet = true
+        }
+        .labelStyle(.iconOnly)
+        .help("Load a palette")
       }
     }
     .padding(8)
@@ -159,11 +182,11 @@ struct FramesStrip: View {
       VStack(alignment: .leading, spacing: 6) {
         HStack {
           Button("New Frame", systemImage: "plus") { editor.addFrame() }
-          Button("Duplicate Frame", systemImage: "plus.square.on.square") {
+          Button("Duplicate Frames", systemImage: "plus.square.on.square") {
             editor.duplicateFrame()
           }
-          Button("Delete Frame", systemImage: "trash") { editor.deleteFrame() }
-            .disabled(sketch.frames == 1)
+          Button("Delete Frames", systemImage: "trash") { editor.deleteFrame() }
+            .disabled(sketch.frames == editor.selectedFrames.count)
         }
         .labelStyle(.iconOnly)
         HStack {
@@ -175,6 +198,20 @@ struct FramesStrip: View {
           .toggleStyle(.button)
           .labelStyle(.iconOnly)
           .help("Play the animation (P)")
+          if !sketch.tags.isEmpty {
+            Picker(
+              "Play",
+              selection: Binding(get: { editor.playTag }, set: { editor.playTag = $0 })
+            ) {
+              Text("All").tag(String?.none)
+              ForEach(sketch.tags, id: \.self) { t in
+                Text(t.name).tag(String?.some(t.name))
+              }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .help("What the preview plays")
+          }
           TextField(
             "ms",
             value: Binding(
@@ -182,7 +219,7 @@ struct FramesStrip: View {
             format: .number
           )
           .frame(width: 56)
-          .help("The frame's duration in milliseconds")
+          .help("The selected frames' duration in milliseconds")
           Text("ms").foregroundStyle(.secondary)
         }
       }
@@ -201,6 +238,7 @@ struct FrameCell: View {
   var body: some View {
     let _ = editor.revision
     let sketch = editor.sketch
+    let selected = editor.selectedFrames.contains(frame)
     let zoom = max(1, Int(FramesStrip.cell) / max(sketch.width, sketch.height))
     VStack(spacing: 1) {
       Group {
@@ -216,32 +254,61 @@ struct FrameCell: View {
       Text("\(frame + 1)")
         .font(.caption2)
         .monospacedDigit()
-        .foregroundStyle(frame == sketch.frame ? .primary : .secondary)
+        .foregroundStyle(selected ? .primary : .secondary)
     }
+    .padding(2)
+    .background(
+      selected ? Color.accentColor.opacity(0.2) : .clear, in: RoundedRectangle(cornerRadius: 4)
+    )
     .contentShape(Rectangle())
-    .onTapGesture { editor.selectFrame(frame) }
+    .onTapGesture { editor.selectFrame(frame, extend: shiftHeld) }
     .contextMenu {
-      Button("Duplicate Frame") {
-        editor.selectFrame(frame)
+      Button("Select Through Here") { editor.selectFrame(frame, extend: true) }
+      Divider()
+      Button(selected && editor.selectedFrames.count > 1 ? "Duplicate Frames" : "Duplicate Frame") {
+        keep()
         editor.duplicateFrame()
       }
-      Button("Delete Frame") {
-        editor.selectFrame(frame)
+      Button(selected && editor.selectedFrames.count > 1 ? "Delete Frames" : "Delete Frame") {
+        keep()
         editor.deleteFrame()
       }
-      .disabled(sketch.frames == 1)
+      .disabled(sketch.frames == (selected ? editor.selectedFrames.count : 1))
+      Button("Copy Frames") {
+        keep()
+        editor.copyFrames()
+      }
+      Button("Paste Frames After") {
+        editor.selectFrame(frame)
+        editor.pasteFrames()
+      }
       Divider()
       Button("New Tag…") {
-        editor.selectFrame(frame)
-        editor.newTag = true
+        keep()
+        editor.newTag()
       }
     }
-    .draggable(String(frame))
+    .draggable("frame:\(frame)")
     .dropDestination(for: String.self) { items, _ in
-      guard let from = items.first.flatMap({ Int($0) }), from != frame else { return false }
+      guard let from = dragged(items, "frame:"), from != frame else { return false }
       editor.moveFrame(from, to: frame)
       return true
     }
+  }
+
+  /// A menu on a frame outside the selection acts on that frame alone.
+  private func keep() {
+    if !editor.selectedFrames.contains(frame) {
+      editor.selectFrame(frame)
+    }
+  }
+
+  private var shiftHeld: Bool {
+    #if os(macOS)
+      NSEvent.modifierFlags.contains(.shift)
+    #else
+      false
+    #endif
   }
 }
 
@@ -264,6 +331,7 @@ struct TagsRow: View {
           .background(Color.accentColor.opacity(0.25), in: RoundedRectangle(cornerRadius: 3))
           .offset(x: CGFloat(t.first) * step)
           .contextMenu {
+            Button("Edit Tag “\(t.name)”…") { editor.tagSheet = t }
             Button("Delete Tag “\(t.name)”") { editor.deleteTag(t.name) }
           }
       }
@@ -274,12 +342,13 @@ struct TagsRow: View {
 /// The animation at its speed while playing; the active frame otherwise.
 struct PreviewBox: View {
   let editor: Editor
-  @State private var shown = 0
+  @State private var step = 0
 
   var body: some View {
     let _ = editor.revision
     let sketch = editor.sketch
-    let frame = editor.playing ? min(shown, sketch.frames - 1) : sketch.frame
+    let order = editor.playOrder
+    let frame = editor.playing && !order.isEmpty ? order[step % order.count] : sketch.frame
     let zoom = max(1, 72 / max(sketch.width, sketch.height))
     Group {
       if let image = sketch.image(frame: frame, zoom: zoom, onion: false) {
@@ -290,12 +359,15 @@ struct PreviewBox: View {
       }
     }
     .border(.secondary.opacity(0.4))
-    .task(id: editor.playing) {
+    .task(id: "\(editor.playing) \(editor.playTag ?? "")") {
       guard editor.playing else { return }
-      shown = editor.sketch.frame
+      step = 0
       while !Task.isCancelled {
-        try? await Task.sleep(for: .milliseconds(max(editor.sketch.duration(shown), 1)))
-        shown = (shown + 1) % max(editor.sketch.frames, 1)
+        let order = editor.playOrder
+        guard !order.isEmpty else { return }
+        let f = order[step % order.count]
+        try? await Task.sleep(for: .milliseconds(max(editor.sketch.duration(f), 1)))
+        step += 1
       }
     }
   }

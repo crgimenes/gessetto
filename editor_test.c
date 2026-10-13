@@ -69,6 +69,16 @@ static void test_pixel_perfect(void) {
     expect("pixel-perfect off", raw);
 }
 
+/* A pen wider than a pixel has no single-pixel corners to take back. */
+static void test_brush_skips_pixel_perfect(void) {
+    static const int32_t pts[] = {0, 0, 1, 0, 1, 1};
+    fresh(4, 4);
+    gesso_brush(&doc, 2, 0);
+    stroke(pts, 3, 0);
+    static const char *const want[] = {"1110", "1110", "0110", "0000"};
+    expect("brush with pixel-perfect on", want);
+}
+
 static void test_mirror(void) {
     fresh(5, 3);
     ed.mirror_x = 1;
@@ -176,6 +186,7 @@ static void test_cancel(void) {
 
 int main(void) {
     test_pixel_perfect();
+    test_brush_skips_pixel_perfect();
     test_mirror();
     test_shape_preview();
     test_constrain();

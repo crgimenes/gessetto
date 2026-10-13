@@ -230,15 +230,38 @@ static int b_frame(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *o
     return nothing(ctx, out);
 }
 
+/* How a direction is written; forward is the default and never written. */
+static const char *const directions[GESSO_DIRECTIONS] = {"forward", "reverse", "pingpong"};
+
 static int b_tag(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
     gesso_script *s = script(ctx);
     gesso_image *img = s->img;
     filo_str name;
     int32_t first;
     int32_t last;
-    if (count(ctx, n, 3) != FILO_OK || str_arg(ctx, &a[0], &name) != FILO_OK ||
-        int_arg(ctx, &a[1], &first) != FILO_OK || int_arg(ctx, &a[2], &last) != FILO_OK) {
+    if (n != 3 && n != 4) {
+        return fail(ctx, "expects 3 or 4 arguments");
+    }
+    if (str_arg(ctx, &a[0], &name) != FILO_OK || int_arg(ctx, &a[1], &first) != FILO_OK ||
+        int_arg(ctx, &a[2], &last) != FILO_OK) {
         return FILO_ERR;
+    }
+    uint32_t dir = GESSO_FORWARD;
+    if (n == 4) {
+        filo_str d;
+        if (str_arg(ctx, &a[3], &d) != FILO_OK) {
+            return FILO_ERR;
+        }
+        dir = GESSO_DIRECTIONS;
+        for (uint32_t k = 0; k < GESSO_DIRECTIONS; k++) {
+            size_t len = strlen(directions[k]);
+            if (d.len == len && memcmp(d.ptr, directions[k], len) == 0) {
+                dir = k;
+            }
+        }
+        if (dir == GESSO_DIRECTIONS) {
+            return fail(ctx, "direction must be \"forward\", \"reverse\" or \"pingpong\"");
+        }
     }
     if (!gesso_tag_name_ok(name.ptr, name.len)) {
         return fail(ctx, gesso_message(GESSO_ERR_TAG_NAME));
@@ -249,7 +272,7 @@ static int b_tag(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out
     char cname[GESSO_TAG_NAME_MAX] = {0};
     memcpy(cname, name.ptr, name.len);
     if (s->doc != NULL) {
-        return done(ctx, gesso_tag_set(s->doc, cname, (uint32_t)first, (uint32_t)last), out);
+        return done(ctx, gesso_tag_set(s->doc, cname, (uint32_t)first, (uint32_t)last, dir), out);
     }
     for (uint32_t i = 0; i < img->ntags; i++) {
         if (memcmp(img->tags[i].name, cname, sizeof cname) == 0) {
@@ -263,6 +286,7 @@ static int b_tag(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out
     memcpy(t->name, cname, sizeof cname);
     t->first = (uint32_t)first;
     t->last = (uint32_t)last;
+    t->direction = dir;
     return nothing(ctx, out);
 }
 
@@ -511,6 +535,106 @@ static int b_duration(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value
     return done(ctx, gesso_frame_duration(doc(ctx), f, (uint32_t)v[1]), out);
 }
 
+/* (frames-x first last ...): the frames as indices, checked like one. */
+static int frame_range(filo_ctx *ctx, const filo_value *a, uint32_t n, uint32_t want, uint32_t *v) {
+    int32_t raw[3];
+    if (ints(ctx, a, n, want, raw) != FILO_OK) {
+        return FILO_ERR;
+    }
+    for (uint32_t i = 0; i < want; i++) {
+        if (frame_index(ctx, raw[i], &v[i]) != FILO_OK) {
+            return FILO_ERR;
+        }
+    }
+    return FILO_OK;
+}
+
+static int b_frames_duplicate(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
+    uint32_t v[2];
+    if (frame_range(ctx, a, n, 2, v) != FILO_OK) {
+        return FILO_ERR;
+    }
+    return done(ctx, gesso_frames_duplicate(doc(ctx), v[0], v[1]), out);
+}
+
+static int b_frames_delete(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
+    uint32_t v[2];
+    if (frame_range(ctx, a, n, 2, v) != FILO_OK) {
+        return FILO_ERR;
+    }
+    return done(ctx, gesso_frames_delete(doc(ctx), v[0], v[1]), out);
+}
+
+static int b_frames_move(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
+    uint32_t v[3];
+    if (frame_range(ctx, a, n, 3, v) != FILO_OK) {
+        return FILO_ERR;
+    }
+    return done(ctx, gesso_frames_move(doc(ctx), v[0], v[1], v[2]), out);
+}
+
+static int b_frames_duration(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
+    int32_t v[3];
+    uint32_t first;
+    uint32_t last;
+    if (ints(ctx, a, n, 3, v) != FILO_OK || frame_index(ctx, v[0], &first) != FILO_OK ||
+        frame_index(ctx, v[1], &last) != FILO_OK) {
+        return FILO_ERR;
+    }
+    if (v[2] < 0) {
+        return fail(ctx, gesso_message(GESSO_ERR_DURATION));
+    }
+    return done(ctx, gesso_frames_duration(doc(ctx), first, last, (uint32_t)v[2]), out);
+}
+
+static int b_color_delete(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
+    int32_t v[1];
+    if (ints(ctx, a, n, 1, v) != FILO_OK) {
+        return FILO_ERR;
+    }
+    if (v[0] < 0) {
+        return fail(ctx, gesso_message(GESSO_ERR_COLOR));
+    }
+    return done(ctx, gesso_color_delete(doc(ctx), (uint32_t)v[0]), out);
+}
+
+static int b_color_move(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
+    int32_t v[2];
+    if (ints(ctx, a, n, 2, v) != FILO_OK) {
+        return FILO_ERR;
+    }
+    if (v[0] < 0 || v[1] < 0) {
+        return fail(ctx, gesso_message(GESSO_ERR_COLOR));
+    }
+    return done(ctx, gesso_color_move(doc(ctx), (uint32_t)v[0], (uint32_t)v[1]), out);
+}
+
+static int b_brush(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
+    int32_t size;
+    if (n != 1 && n != 2) {
+        return fail(ctx, "expects 1 or 2 arguments");
+    }
+    if (int_arg(ctx, &a[0], &size) != FILO_OK) {
+        return FILO_ERR;
+    }
+    if (size < 1 || size > GESSO_BRUSH_MAX) {
+        return fail(ctx, "brush size must be 1 to 16");
+    }
+    int round = 0;
+    if (n == 2) {
+        filo_str form;
+        if (str_arg(ctx, &a[1], &form) != FILO_OK) {
+            return FILO_ERR;
+        }
+        round = form.len == 5 && memcmp(form.ptr, "round", 5) == 0;
+        if (!round && !(form.len == 6 && memcmp(form.ptr, "square", 6) == 0)) {
+            return fail(ctx, "brush shape must be \"square\" or \"round\"");
+        }
+    }
+    gesso_brush(doc(ctx), (uint32_t)size, round);
+    return nothing(ctx, out);
+}
+
 static int b_untag(filo_ctx *ctx, const filo_value *a, uint32_t n, filo_value *out) {
     filo_str name;
     if (count(ctx, n, 1) != FILO_OK || str_arg(ctx, &a[0], &name) != FILO_OK) {
@@ -594,8 +718,15 @@ static const builtin ops_builtins[] = {
     {"frame-move", b_frame_move},
     {"frame-select", b_frame_select},
     {"duration", b_duration},
+    {"frames-duplicate", b_frames_duplicate},
+    {"frames-delete", b_frames_delete},
+    {"frames-move", b_frames_move},
+    {"frames-duration", b_frames_duration},
     {"untag", b_untag},
+    {"brush", b_brush},
     {"color", b_color},
+    {"color-delete", b_color_delete},
+    {"color-move", b_color_move},
     {"undo", b_undo},
     {"redo", b_redo},
 };
@@ -738,6 +869,11 @@ size_t gesso_write(const gesso_image *img, uint8_t *dst, size_t cap) {
         put_uint(&o, img->tags[i].first);
         put_str(&o, " ");
         put_uint(&o, img->tags[i].last);
+        if (img->tags[i].direction != GESSO_FORWARD && img->tags[i].direction < GESSO_DIRECTIONS) {
+            put_str(&o, " \"");
+            put_str(&o, directions[img->tags[i].direction]);
+            put_str(&o, "\"");
+        }
         put_str(&o, ")\n");
     }
     return o.len;

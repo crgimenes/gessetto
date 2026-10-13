@@ -1,0 +1,4 @@
+; A 3x3 square pen along a line: rows 1..3, every column.
+(new 7 5)
+(brush 3)
+(line 1 2 5 2 1)

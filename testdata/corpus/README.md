@@ -23,7 +23,7 @@ A `.gesso` file is Filo that only describes an image, in this order:
 | `(gesso 1 w h)` | version 1, width and height from 1 to 256 |
 | `(palette "#rrggbb" ...)` | colors for indices 1 and up, at most 255; index 0 is transparent |
 | `(frame ms "row" ...)` | one frame: duration 1 to 60000 ms, then one string per row, two hex digits per pixel, each index below the palette's size; at most 256 frames |
-| `(tag "name" first last)` | frames first..last, both included; name 1 to 31 printable ASCII bytes, no `"` or `\`, unique |
+| `(tag "name" first last ["direction"])` | frames first..last, both included; name 1 to 31 printable ASCII bytes, no `"` or `\`, unique; direction `"forward"` (the default, never written), `"reverse"` or `"pingpong"` |
 
 Hex digits may be either case; the writer uses lowercase and puts the index
 of each palette color in a comment. A file runs with only these four and the
@@ -36,6 +36,7 @@ The four above build an image (an ops script may start with them), or:
 | Call | Effect |
 |---|---|
 | `(new w h)` | a blank w x h image, one frame of 100 ms, the PICO-8 colors at indices 1 to 16 |
+| `(brush size ["square"\|"round"])` | the pen for what follows (1 to 16, square by default): lines, pixels and outlines stamp it at every point, fills ignore it; an even size reaches one further right and down; round keeps the cells whose centers fall within the circle of that diameter |
 | `(pixel x y c)` | set one pixel of the active frame |
 | `(line x0 y0 x1 y1 c)` | Bresenham line, both ends included |
 | `(rect x0 y0 x1 y1 c)` / `(rect-fill ...)` | outline / area of the rectangle with those corners, both included |
@@ -54,8 +55,14 @@ The four above build an image (an ops script may start with them), or:
 | `(frame-delete)` | delete the active frame; tags over it shrink, a tag of only that frame goes |
 | `(frame-move from to)` / `(frame-select i)` | move a frame (tags keep their numbers) / make frame i active |
 | `(duration i ms)` | the duration of frame i |
+| `(frames-duplicate a b)` | copies of frames a..b right after b; the first copy becomes active |
+| `(frames-delete a b)` | frames a..b go; a tag wholly inside them goes, the others close the gap |
+| `(frames-move a b to)` | frames a..b move so a lands at index to; tags keep their numbers |
+| `(frames-duration a b ms)` | the duration of frames a..b |
 | `(tag "name" first last)` / `(untag "name")` | set or replace / delete a tag |
 | `(color i "#rrggbb")` | set palette entry i, 1 up to the palette's size, which appends |
+| `(color-delete i)` | color i goes; its pixels take the nearest color left (index 0 when none), the indices above it come down by one |
+| `(color-move from to)` | color from moves to index to, the ones between shift over; pixels keep their colors |
 | `(undo)` / `(redo)` | `#t` if something was undone / redone |
 
 Colors are indices; coordinates and sizes are integers, a fraction is an

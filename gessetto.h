@@ -3,8 +3,8 @@
    only this header: gesso_doc's arrays are megabytes, and the importer
    would turn them into tuples.
 
-   Every call runs on one thread at a time per document. gst_read,
-   gst_import_png and gst_write also share one scratch area among all
+   Every call runs on one thread at a time per document. Reading, importing,
+   gst_write and gst_header also share one scratch area among all
    documents: the caller serializes those. */
 #ifndef GESSETTO_H
 #define GESSETTO_H
@@ -60,9 +60,17 @@ int gst_resize(gst *g, int32_t width, int32_t height, char err[GST_ERROR_MAX]);
 int gst_read(gst *g, const uint8_t *src, size_t len, char err[GST_ERROR_MAX]);
 /* A PNG replaces the image, its colors the palette: one undo step. */
 int gst_import_png(gst *g, const uint8_t *src, size_t len, char err[GST_ERROR_MAX]);
+/* A sprite sheet (sw x sh pixels, 0xAARRGGBB) cut into w x h frames
+   replaces the image: one undo step. */
+int gst_import_sheet(gst *g, const uint32_t *argb, int32_t sw, int32_t sh, int32_t w, int32_t h,
+                     char err[GST_ERROR_MAX]);
 /* The image as a .gesso file, in the scratch area until the next call;
    a floating selection is dropped first. NULL when it does not fit. */
-const uint8_t *gst_write(gst *g, size_t *len);
+const uint8_t *gst_write(const gst *g, size_t *len);
+
+/* The image as the C header gesso2c makes, identifiers from name (a file
+   name will do), in the scratch area like gst_write. NULL when too large. */
+const uint8_t *gst_header(const gst *g, const char *name, size_t *len);
 
 int32_t gst_width(const gst *g);
 int32_t gst_height(const gst *g);
@@ -76,6 +84,10 @@ uint32_t gst_tags(const gst *g);
 const char *gst_tag_name(const gst *g, uint32_t tag);
 uint32_t gst_tag_first(const gst *g, uint32_t tag);
 uint32_t gst_tag_last(const gst *g, uint32_t tag);
+uint32_t gst_tag_direction(const gst *g, uint32_t tag);
+/* The index shown at (x, y) of the active frame, floating pixels
+   included; 0 outside. */
+uint8_t gst_index_at(const gst *g, int32_t x, int32_t y);
 /* 0 without a selection, 1 with one, 2 while it floats; r gets x, y, w, h. */
 int gst_selection(const gst *g, int32_t r[4]);
 
@@ -88,6 +100,11 @@ void gst_set_bg(gst *g, uint32_t index);
 void gst_swap_colors(gst *g);
 int gst_option_get(const gst *g, gst_option o);
 void gst_option_set(gst *g, gst_option o, int on);
+
+/* The pen: 1 to 16 pixels, square or round. */
+void gst_brush_set(gst *g, uint32_t size, int round);
+uint32_t gst_brush_size(const gst *g);
+int gst_brush_round(const gst *g);
 
 /* A gesture, in image pixels (outside the image is fine). */
 void gst_press(gst *g, int32_t x, int32_t y, int secondary);
@@ -117,16 +134,32 @@ int gst_flip(gst *g, int vertical);
 int gst_rotate(gst *g);
 int gst_frame_select(gst *g, uint32_t frame);
 int gst_frame_add(gst *g);
-int gst_frame_duplicate(gst *g);
-int gst_frame_delete(gst *g);
-int gst_frame_move(gst *g, uint32_t from, uint32_t to);
-int gst_frame_duration(gst *g, uint32_t frame, uint32_t ms);
-int gst_tag_set(gst *g, const char *name, uint32_t first, uint32_t last, char err[GST_ERROR_MAX]);
+/* Frames first..last, both included: copies go after last (the first copy
+   becomes active), a move puts first at to. */
+int gst_frames_duplicate(gst *g, uint32_t first, uint32_t last);
+int gst_frames_delete(gst *g, uint32_t first, uint32_t last);
+int gst_frames_move(gst *g, uint32_t first, uint32_t last, uint32_t to);
+int gst_frames_duration(gst *g, uint32_t first, uint32_t last, uint32_t ms);
+/* Frames copied as colors (0xAARRGGBB, width * height each, maybe from
+   another image of this size) go in after the active frame, each color
+   matched to this palette. Uses the scratch area. */
+int gst_frames_paste(gst *g, const uint32_t *argb, const uint32_t *duration, uint32_t count);
+/* direction: 0 forward, 1 reverse, 2 ping-pong. */
+int gst_tag_set(gst *g, const char *name, uint32_t first, uint32_t last, uint32_t direction,
+                char err[GST_ERROR_MAX]);
 int gst_tag_delete(gst *g, const char *name);
 /* Successive changes to the same color, with nothing else between them,
    are one step: a color panel sends one per movement. index == gst_colors
    appends. */
 int gst_color_set(gst *g, uint32_t index, uint32_t rgb);
+
+/* A color removed, its pixels taking the nearest left; a color moved, its
+   pixels keeping it. The tools' colors follow. */
+int gst_color_delete(gst *g, uint32_t index);
+int gst_color_move(gst *g, uint32_t from, uint32_t to);
+/* A new palette (0xRRGGBB, 1 to 255 colors): match moves every pixel to the
+   nearest new color, otherwise indices stay. */
+int gst_palette_load(gst *g, const uint32_t *colors, uint32_t count, int match);
 
 /* The clipboard as ARGB (index 0 clear), for the system's; w and h are 0
    when it is empty. dst holds GST_SIDE_MAX * GST_SIDE_MAX. */
@@ -135,9 +168,13 @@ void gst_clip_argb(const gst *g, uint32_t *dst, int32_t *w, int32_t *h);
    matched to the palette. */
 int gst_clip_from_argb(gst *g, const uint32_t *src, int32_t w, int32_t h);
 
+/* A frame as it is, for export: 0xAARRGGBB, index 0 clear, the floating
+   selection where it floats. dst holds width * height. */
+void gst_frame_argb(const gst *g, uint32_t frame, uint32_t *dst);
+
 /* A frame as opaque 0xAARRGGBB, width * height: transparency as the
    checkerboard drawn at zoom (screen points per pixel), and with onion the
-   previous frame faint under it. The active frame shows the floating
+   previous frame faint under it, the next one fainter. The active frame shows the floating
    selection. */
 void gst_render(const gst *g, uint32_t *dst, uint32_t frame, int32_t zoom, int onion);
 

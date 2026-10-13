@@ -60,6 +60,7 @@ static const char *const messages[] = {
     [GESSO_ERR_NO_TAG] = "no such tag",
     [GESSO_ERR_NO_SELECTION] = "nothing selected",
     [GESSO_ERR_CLIPBOARD] = "clipboard empty",
+    [GESSO_ERR_TAG_DIRECTION] = "bad tag direction",
 };
 
 const char *gesso_message(gesso_status s) {
@@ -386,6 +387,8 @@ void gesso_init(gesso_doc *d, uint8_t *log, size_t cap) {
     d->clip.h = 0;
     d->log = log;
     d->cap = cap;
+    d->brush = 1;
+    d->brush_round = 0;
     d->group = 0;
     d->group_next = 0;
     d->float_group = 0;
@@ -470,10 +473,43 @@ static void plot(gesso_doc *d, int32_t x, int32_t y, uint8_t c) {
     gesso_frame_pixels(&d->img, d->frame)[(size_t)y * (size_t)d->img.width + (size_t)x] = c;
 }
 
+void gesso_brush(gesso_doc *d, uint32_t size, int round) {
+    d->brush = size < 1 ? 1 : size;
+    if (d->brush > GESSO_BRUSH_MAX) {
+        d->brush = GESSO_BRUSH_MAX;
+    }
+    d->brush_round = round != 0;
+}
+
+/* The pen at (x, y). Round keeps the cells whose centers lie within the
+   circle of diameter size, in doubled units to stay in integers. */
+static void dab(gesso_doc *d, int32_t x, int32_t y, uint8_t c) {
+    int32_t n = (int32_t)d->brush;
+    int32_t lo = (n - 1) / 2;
+    for (int32_t j = 0; j < n; j++) {
+        for (int32_t i = 0; i < n; i++) {
+            int32_t u = 2 * i - (n - 1);
+            int32_t v = 2 * j - (n - 1);
+            if (d->brush_round && u * u + v * v > n * n) {
+                continue;
+            }
+            plot(d, x - lo + i, y - lo + j, c);
+        }
+    }
+}
+
+/* r grown by the pen's reach, for what a stroke may touch. */
+static gesso_rect reach(const gesso_doc *d, gesso_rect r) {
+    int32_t lo = ((int32_t)d->brush - 1) / 2;
+    int32_t hi = (int32_t)d->brush / 2;
+    return (gesso_rect){r.x - lo, r.y - lo, r.w + lo + hi, r.h + lo + hi};
+}
+
+/* A filled row, or an outline's two ends stamped with the pen. */
 static void span(gesso_doc *d, int32_t xa, int32_t xb, int32_t y, uint8_t c, int filled) {
     if (!filled) {
-        plot(d, xa, y, c);
-        plot(d, xb, y, c);
+        dab(d, xa, y, c);
+        dab(d, xb, y, c);
         return;
     }
     for (int32_t x = xa; x <= xb; x++) {
@@ -509,7 +545,7 @@ gesso_status gesso_line(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, int32_
         return st;
     }
     gesso_drop(d);
-    gesso_rect r = clip(d, corners(x0, y0, x1, y1));
+    gesso_rect r = clip(d, reach(d, corners(x0, y0, x1, y1)));
     if (r.w == 0) {
         return GESSO_OK;
     }
@@ -520,7 +556,7 @@ gesso_status gesso_line(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, int32_
     int32_t sy = y0 < y1 ? 1 : -1;
     int32_t err = dx + dy;
     for (;;) {
-        plot(d, x0, y0, c);
+        dab(d, x0, y0, c);
         if (x0 == x1 && y0 == y1) {
             break;
         }
@@ -546,7 +582,7 @@ gesso_status gesso_rect_draw(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, i
     }
     gesso_drop(d);
     gesso_rect box = corners(x0, y0, x1, y1);
-    gesso_rect r = clip(d, box);
+    gesso_rect r = clip(d, filled ? box : reach(d, box));
     if (r.w == 0) {
         return GESSO_OK;
     }
@@ -554,8 +590,13 @@ gesso_status gesso_rect_draw(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, i
     int32_t right = box.x + box.w - 1;
     int32_t bottom = box.y + box.h - 1;
     for (int32_t y = box.y; y <= bottom; y++) {
-        int edge = filled || y == box.y || y == bottom;
-        span(d, box.x, right, y, c, edge);
+        if (filled || (y != box.y && y != bottom)) {
+            span(d, box.x, right, y, c, filled);
+            continue;
+        }
+        for (int32_t x = box.x; x <= right; x++) {
+            dab(d, x, y, c);
+        }
     }
     pixel_end(d, e);
     return GESSO_OK;
@@ -571,7 +612,7 @@ gesso_status gesso_ellipse(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, int
     }
     gesso_drop(d);
     gesso_rect box = corners(x0, y0, x1, y1);
-    gesso_rect r = clip(d, box);
+    gesso_rect r = clip(d, filled ? box : reach(d, box));
     if (r.w == 0) {
         return GESSO_OK;
     }
@@ -977,7 +1018,7 @@ gesso_status gesso_frame_select(gesso_doc *d, uint32_t frame) {
     return GESSO_OK;
 }
 
-static gesso_status insert_frame(gesso_doc *d, int copy) {
+gesso_status gesso_frame_add(gesso_doc *d) {
     gesso_status st = ready(d);
     if (st != GESSO_OK) {
         return st;
@@ -994,24 +1035,12 @@ static gesso_status insert_frame(gesso_doc *d, int copy) {
             (size_t)(img->nframes - at) * n);
     memmove(img->duration + at + 1, img->duration + at,
             (size_t)(img->nframes - at) * sizeof img->duration[0]);
-    if (copy) {
-        memcpy(img->pixels + (size_t)at * n, img->pixels + (size_t)d->frame * n, n);
-    } else {
-        memset(img->pixels + (size_t)at * n, 0, n);
-    }
+    memset(img->pixels + (size_t)at * n, 0, n);
     img->duration[at] = img->duration[d->frame];
     img->nframes++;
     d->frame = at;
     image_end(d, e);
     return GESSO_OK;
-}
-
-gesso_status gesso_frame_add(gesso_doc *d) {
-    return insert_frame(d, 0);
-}
-
-gesso_status gesso_frame_duplicate(gesso_doc *d) {
-    return insert_frame(d, 1);
 }
 
 static void remove_tag(gesso_image *img, uint32_t i) {
@@ -1020,37 +1049,122 @@ static void remove_tag(gesso_image *img, uint32_t i) {
     memset(&img->tags[img->ntags], 0, sizeof img->tags[0]);
 }
 
-gesso_status gesso_frame_delete(gesso_doc *d) {
+static gesso_status range(const gesso_doc *d, uint32_t first, uint32_t last) {
+    gesso_status st = ready(d);
+    if (st != GESSO_OK) {
+        return st;
+    }
+    if (first > last || last >= d->img.nframes) {
+        return GESSO_ERR_FRAME;
+    }
+    return GESSO_OK;
+}
+
+gesso_status gesso_frames_duplicate(gesso_doc *d, uint32_t first, uint32_t last) {
+    gesso_status st = range(d, first, last);
+    if (st != GESSO_OK) {
+        return st;
+    }
+    gesso_image *img = &d->img;
+    uint32_t k = last - first + 1;
+    if (img->nframes + k > GESSO_FRAMES_MAX) {
+        return GESSO_ERR_FRAMES_FULL;
+    }
+    gesso_drop(d);
+    size_t n = frame_size(img);
+    image_edit e = image_begin_sized(d, META + (size_t)(img->nframes + k) * n);
+    uint32_t at = last + 1;
+    memmove(img->pixels + (size_t)(at + k) * n, img->pixels + (size_t)at * n,
+            (size_t)(img->nframes - at) * n);
+    memmove(img->duration + at + k, img->duration + at,
+            (size_t)(img->nframes - at) * sizeof img->duration[0]);
+    memcpy(img->pixels + (size_t)at * n, img->pixels + (size_t)first * n, (size_t)k * n);
+    memcpy(img->duration + at, img->duration + first, k * sizeof img->duration[0]);
+    img->nframes += k;
+    d->frame = at;
+    image_end(d, e);
+    return GESSO_OK;
+}
+
+gesso_status gesso_frames_insert(gesso_doc *d, const uint8_t *px, const uint32_t *duration,
+                                 uint32_t count) {
     gesso_status st = ready(d);
     if (st != GESSO_OK) {
         return st;
     }
     gesso_image *img = &d->img;
-    if (img->nframes == 1) {
+    if (count == 0 || count > GESSO_FRAMES_MAX - img->nframes) {
+        return GESSO_ERR_FRAMES_FULL;
+    }
+    size_t n = frame_size(img);
+    for (uint32_t f = 0; f < count; f++) {
+        if (duration[f] < 1 || duration[f] > GESSO_DURATION_MAX) {
+            return GESSO_ERR_DURATION;
+        }
+    }
+    for (size_t i = 0; i < (size_t)count * n; i++) {
+        if (px[i] >= img->ncolors) {
+            return GESSO_ERR_COLOR;
+        }
+    }
+    gesso_drop(d);
+    image_edit e = image_begin_sized(d, META + (size_t)(img->nframes + count) * n);
+    uint32_t at = d->frame + 1;
+    memmove(img->pixels + (size_t)(at + count) * n, img->pixels + (size_t)at * n,
+            (size_t)(img->nframes - at) * n);
+    memmove(img->duration + at + count, img->duration + at,
+            (size_t)(img->nframes - at) * sizeof img->duration[0]);
+    memcpy(img->pixels + (size_t)at * n, px, (size_t)count * n);
+    memcpy(img->duration + at, duration, count * sizeof img->duration[0]);
+    img->nframes += count;
+    d->frame = at;
+    image_end(d, e);
+    return GESSO_OK;
+}
+
+gesso_status gesso_frame_duplicate(gesso_doc *d) {
+    return gesso_frames_duplicate(d, d->frame, d->frame);
+}
+
+/* A tag wholly inside the deleted frames goes; the others close the gap. */
+gesso_status gesso_frames_delete(gesso_doc *d, uint32_t first, uint32_t last) {
+    gesso_status st = range(d, first, last);
+    if (st != GESSO_OK) {
+        return st;
+    }
+    gesso_image *img = &d->img;
+    uint32_t k = last - first + 1;
+    if (k == img->nframes) {
         return GESSO_ERR_LAST_FRAME;
     }
     gesso_drop(d);
     image_edit e = image_begin(d);
     size_t n = frame_size(img);
-    uint32_t f = d->frame;
-    memmove(img->pixels + (size_t)f * n, img->pixels + (size_t)(f + 1) * n,
-            (size_t)(img->nframes - f - 1) * n);
-    memmove(img->duration + f, img->duration + f + 1,
-            (size_t)(img->nframes - f - 1) * sizeof img->duration[0]);
-    img->nframes--;
-    img->duration[img->nframes] = 0;
+    memmove(img->pixels + (size_t)first * n, img->pixels + (size_t)(last + 1) * n,
+            (size_t)(img->nframes - last - 1) * n);
+    memmove(img->duration + first, img->duration + last + 1,
+            (size_t)(img->nframes - last - 1) * sizeof img->duration[0]);
+    img->nframes -= k;
+    memset(img->duration + img->nframes, 0, k * sizeof img->duration[0]);
     for (uint32_t i = img->ntags; i-- > 0;) {
         gesso_tag *t = &img->tags[i];
-        if (t->first == f && t->last == f) {
+        if (t->first >= first && t->last <= last) {
             remove_tag(img, i);
             continue;
         }
-        if (t->first > f) {
-            t->first--;
+        if (t->first > last) {
+            t->first -= k;
+        } else if (t->first >= first) {
+            t->first = first;
         }
-        if (t->last >= f) {
-            t->last--;
+        if (t->last > last) {
+            t->last -= k;
+        } else if (t->last >= first) {
+            t->last = first - 1;
         }
+    }
+    if (d->frame >= first) {
+        d->frame = d->frame > last ? d->frame - k : first;
     }
     if (d->frame >= img->nframes) {
         d->frame = img->nframes - 1;
@@ -1059,38 +1173,70 @@ gesso_status gesso_frame_delete(gesso_doc *d) {
     return GESSO_OK;
 }
 
-gesso_status gesso_frame_move(gesso_doc *d, uint32_t from, uint32_t to) {
+gesso_status gesso_frame_delete(gesso_doc *d) {
+    return gesso_frames_delete(d, d->frame, d->frame);
+}
+
+/* Frames a..b (both included) in reverse order, one frame of scratch. */
+static void reverse_frames(gesso_doc *d, uint32_t a, uint32_t b) {
     gesso_image *img = &d->img;
-    if (from >= img->nframes || to >= img->nframes) {
+    size_t n = frame_size(img);
+    while (a < b) {
+        uint8_t *x = img->pixels + (size_t)a * n;
+        uint8_t *y = img->pixels + (size_t)b * n;
+        memcpy(d->scratch.pixels, x, n);
+        memcpy(x, y, n);
+        memcpy(y, d->scratch.pixels, n);
+        uint32_t t = img->duration[a];
+        img->duration[a] = img->duration[b];
+        img->duration[b] = t;
+        a++;
+        b--;
+    }
+}
+
+/* Frames a..c with a..b moved after the rest: three reversals. */
+static void rotate_frames(gesso_doc *d, uint32_t a, uint32_t b, uint32_t c) {
+    reverse_frames(d, a, b);
+    reverse_frames(d, b + 1, c);
+    reverse_frames(d, a, c);
+}
+
+/* The frames first..last go so the first of them lands at to; tags stay on
+   their frame numbers. */
+gesso_status gesso_frames_move(gesso_doc *d, uint32_t first, uint32_t last, uint32_t to) {
+    gesso_status st = range(d, first, last);
+    if (st != GESSO_OK) {
+        return st;
+    }
+    uint32_t k = last - first + 1;
+    if (to > d->img.nframes - k) {
         return GESSO_ERR_FRAME;
     }
-    if (from == to) {
+    if (to == first) {
         return GESSO_OK;
     }
     gesso_drop(d);
     image_edit e = image_begin(d);
-    size_t n = frame_size(img);
-    uint32_t ms = img->duration[from];
-    memcpy(d->scratch.pixels, img->pixels + (size_t)from * n, n);
-    if (from < to) {
-        memmove(img->pixels + (size_t)from * n, img->pixels + (size_t)(from + 1) * n,
-                (size_t)(to - from) * n);
-        memmove(img->duration + from, img->duration + from + 1,
-                (to - from) * sizeof img->duration[0]);
+    if (to > first) {
+        rotate_frames(d, first, last, to + k - 1);
     } else {
-        memmove(img->pixels + (size_t)(to + 1) * n, img->pixels + (size_t)to * n,
-                (size_t)(from - to) * n);
-        memmove(img->duration + to + 1, img->duration + to, (from - to) * sizeof img->duration[0]);
+        rotate_frames(d, to, first - 1, last);
     }
-    memcpy(img->pixels + (size_t)to * n, d->scratch.pixels, n);
-    img->duration[to] = ms;
     d->frame = to;
     image_end(d, e);
     return GESSO_OK;
 }
 
-gesso_status gesso_frame_duration(gesso_doc *d, uint32_t frame, uint32_t ms) {
-    if (frame >= d->img.nframes) {
+gesso_status gesso_frame_move(gesso_doc *d, uint32_t from, uint32_t to) {
+    if (from >= d->img.nframes || to >= d->img.nframes) {
+        return GESSO_ERR_FRAME;
+    }
+    return gesso_frames_move(d, from, from, to);
+}
+
+gesso_status gesso_frames_duration(gesso_doc *d, uint32_t first, uint32_t last, uint32_t ms) {
+    if (first > last || last >= d->img.nframes) {
         return GESSO_ERR_FRAME;
     }
     if (ms < 1 || ms > GESSO_DURATION_MAX) {
@@ -1098,9 +1244,15 @@ gesso_status gesso_frame_duration(gesso_doc *d, uint32_t frame, uint32_t ms) {
     }
     gesso_drop(d);
     image_edit e = image_begin(d);
-    d->img.duration[frame] = ms;
+    for (uint32_t f = first; f <= last; f++) {
+        d->img.duration[f] = ms;
+    }
     image_end(d, e);
     return GESSO_OK;
+}
+
+gesso_status gesso_frame_duration(gesso_doc *d, uint32_t frame, uint32_t ms) {
+    return gesso_frames_duration(d, frame, frame, ms);
 }
 
 int gesso_tag_name_ok(const uint8_t *name, size_t len) {
@@ -1132,7 +1284,8 @@ static int find_tag(const gesso_image *img, const char *name, size_t len) {
     return -1;
 }
 
-gesso_status gesso_tag_set(gesso_doc *d, const char *name, uint32_t first, uint32_t last) {
+gesso_status gesso_tag_set(gesso_doc *d, const char *name, uint32_t first, uint32_t last,
+                           uint32_t direction) {
     gesso_image *img = &d->img;
     size_t len = name_len(name);
     if (!gesso_tag_name_ok((const uint8_t *)name, len)) {
@@ -1140,6 +1293,9 @@ gesso_status gesso_tag_set(gesso_doc *d, const char *name, uint32_t first, uint3
     }
     if (first > last || last >= img->nframes) {
         return GESSO_ERR_TAG_RANGE;
+    }
+    if (direction >= GESSO_DIRECTIONS) {
+        return GESSO_ERR_TAG_DIRECTION;
     }
     int i = find_tag(img, name, len);
     if (i < 0 && img->ntags == GESSO_TAGS_MAX) {
@@ -1154,6 +1310,7 @@ gesso_status gesso_tag_set(gesso_doc *d, const char *name, uint32_t first, uint3
     }
     img->tags[i].first = first;
     img->tags[i].last = last;
+    img->tags[i].direction = direction;
     image_end(d, e);
     return GESSO_OK;
 }
@@ -1166,6 +1323,141 @@ gesso_status gesso_tag_delete(gesso_doc *d, const char *name) {
     gesso_drop(d);
     image_edit e = image_begin(d);
     remove_tag(&d->img, (uint32_t)i);
+    image_end(d, e);
+    return GESSO_OK;
+}
+
+/* Every pixel index, in every frame and in the clipboard, through map. */
+static void remap(gesso_doc *d, const uint8_t *map) {
+    gesso_image *img = &d->img;
+    size_t total = (size_t)img->nframes * frame_size(img);
+    for (size_t i = 0; i < total; i++) {
+        img->pixels[i] = map[img->pixels[i]];
+    }
+    size_t held = (size_t)d->clip.w * (size_t)d->clip.h;
+    for (size_t i = 0; i < held; i++) {
+        d->clip.pixels[i] = map[d->clip.pixels[i]];
+    }
+}
+
+static uint32_t distance(uint32_t a, uint32_t b) {
+    uint32_t sum = 0;
+    for (uint32_t shift = 0; shift < 24; shift += 8) {
+        int32_t x = (int32_t)(a >> shift & 0xffu);
+        int32_t y = (int32_t)(b >> shift & 0xffu);
+        sum += (uint32_t)((x - y) * (x - y));
+    }
+    return sum;
+}
+
+/* Its pixels take the nearest color left (index 0 when none is); the
+   indices above it come down by one. */
+gesso_status gesso_color_delete(gesso_doc *d, uint32_t index) {
+    gesso_status st = ready(d);
+    if (st != GESSO_OK) {
+        return st;
+    }
+    gesso_image *img = &d->img;
+    if (index == 0 || index >= img->ncolors) {
+        return GESSO_ERR_COLOR;
+    }
+    gesso_drop(d);
+    image_edit e = image_begin(d);
+    uint32_t best = 0;
+    uint32_t best_d = UINT32_MAX;
+    for (uint32_t k = 1; k < img->ncolors; k++) {
+        uint32_t dk = distance(img->palette[k], img->palette[index]);
+        if (k != index && dk < best_d) {
+            best = k;
+            best_d = dk;
+        }
+    }
+    uint8_t map[GESSO_COLORS_MAX];
+    for (uint32_t k = 0; k < GESSO_COLORS_MAX; k++) {
+        uint32_t to = k == index ? best : k;
+        map[k] = (uint8_t)(to > index ? to - 1 : to);
+    }
+    memmove(img->palette + index, img->palette + index + 1,
+            (img->ncolors - index - 1) * sizeof img->palette[0]);
+    img->ncolors--;
+    img->palette[img->ncolors] = 0;
+    remap(d, map);
+    image_end(d, e);
+    return GESSO_OK;
+}
+
+/* The color at from goes to to, the ones between shifting over; pixels keep
+   their colors. */
+gesso_status gesso_color_move(gesso_doc *d, uint32_t from, uint32_t to) {
+    gesso_status st = ready(d);
+    if (st != GESSO_OK) {
+        return st;
+    }
+    gesso_image *img = &d->img;
+    if (from == 0 || to == 0 || from >= img->ncolors || to >= img->ncolors) {
+        return GESSO_ERR_COLOR;
+    }
+    if (from == to) {
+        return GESSO_OK;
+    }
+    gesso_drop(d);
+    image_edit e = image_begin(d);
+    uint8_t map[GESSO_COLORS_MAX];
+    uint32_t moved[GESSO_COLORS_MAX] = {0};
+    for (uint32_t k = 0; k < GESSO_COLORS_MAX; k++) {
+        uint32_t m = k;
+        if (k == from) {
+            m = to;
+        } else if (from < to && k > from && k <= to) {
+            m = k - 1;
+        } else if (from > to && k >= to && k < from) {
+            m = k + 1;
+        }
+        map[k] = (uint8_t)m;
+    }
+    for (uint32_t k = 0; k < img->ncolors; k++) {
+        moved[map[k]] = img->palette[k];
+    }
+    memcpy(img->palette, moved, img->ncolors * sizeof img->palette[0]);
+    remap(d, map);
+    image_end(d, e);
+    return GESSO_OK;
+}
+
+gesso_status gesso_palette_load(gesso_doc *d, const uint32_t *colors, uint32_t count, int match) {
+    gesso_status st = ready(d);
+    if (st != GESSO_OK) {
+        return st;
+    }
+    if (count < 1 || count >= GESSO_COLORS_MAX) {
+        return GESSO_ERR_PALETTE_FULL;
+    }
+    gesso_image *img = &d->img;
+    gesso_drop(d);
+    image_edit e = image_begin(d);
+    uint8_t map[GESSO_COLORS_MAX] = {0};
+    for (uint32_t k = 1; k < img->ncolors; k++) {
+        if (!match && k <= count) {
+            map[k] = (uint8_t)k;
+            continue;
+        }
+        uint32_t best = 1;
+        uint32_t best_d = UINT32_MAX;
+        for (uint32_t c = 0; c < count; c++) {
+            uint32_t dc = distance(colors[c], img->palette[k]);
+            if (dc < best_d) {
+                best = c + 1;
+                best_d = dc;
+            }
+        }
+        map[k] = (uint8_t)best;
+    }
+    memset(img->palette, 0, sizeof img->palette);
+    for (uint32_t c = 0; c < count; c++) {
+        img->palette[c + 1] = 0xff000000u | (colors[c] & 0xffffffu);
+    }
+    img->ncolors = count + 1;
+    remap(d, map);
     image_end(d, e);
     return GESSO_OK;
 }
