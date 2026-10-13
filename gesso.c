@@ -539,6 +539,40 @@ gesso_status gesso_pixel(gesso_doc *d, int32_t x, int32_t y, uint8_t c) {
     return gesso_line(d, x, y, x, y, c);
 }
 
+/* A line as pixel art wants it. It is measured in the pixels it covers,
+   ends included, so a line 6 wide and 3 high steps exactly every 2 (the
+   classic line, measured end to end, gives 12 x 4 steps of 2, 4, 4, 2).
+   Along the long side each pixel takes the row its center falls in, and the
+   second half is the first turned about the middle: steps as even as they
+   can be, the same from either end. Drawn from the end nearer the origin
+   along the long side, so swapping the ends draws the same pixels. */
+static void segment(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint8_t c) {
+    int steep = (y1 > y0 ? y1 - y0 : y0 - y1) > (x1 > x0 ? x1 - x0 : x0 - x1);
+    if (steep ? y0 > y1 : x0 > x1) {
+        int32_t t = x0;
+        x0 = x1;
+        x1 = t;
+        t = y0;
+        y0 = y1;
+        y1 = t;
+    }
+    int64_t w = (int64_t)(x1 > x0 ? x1 - x0 : x0 - x1) + 1;
+    int64_t h = (int64_t)(y1 > y0 ? y1 - y0 : y0 - y1) + 1;
+    int64_t n = steep ? h : w;
+    int64_t m = steep ? w : h;
+    int32_t sx = x0 <= x1 ? 1 : -1;
+    int32_t sy = y0 <= y1 ? 1 : -1;
+    for (int64_t i = 0; i < n; i++) {
+        int64_t j = (2 * i + 1) * m / (2 * n);
+        if (i >= n / 2) {
+            j = m - 1 - (2 * (n - 1 - i) + 1) * m / (2 * n);
+        }
+        int64_t along = steep ? j : i;
+        int64_t across = steep ? i : j;
+        dab(d, (int32_t)(x0 + sx * along), (int32_t)(y0 + sy * across), c);
+    }
+}
+
 gesso_status gesso_line(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint8_t c) {
     gesso_status st = check(d, c, x0, y0, x1, y1);
     if (st != GESSO_OK) {
@@ -550,26 +584,7 @@ gesso_status gesso_line(gesso_doc *d, int32_t x0, int32_t y0, int32_t x1, int32_
         return GESSO_OK;
     }
     pixel_edit e = pixel_begin(d, r);
-    int32_t dx = x1 > x0 ? x1 - x0 : x0 - x1;
-    int32_t dy = y1 > y0 ? y0 - y1 : y1 - y0;
-    int32_t sx = x0 < x1 ? 1 : -1;
-    int32_t sy = y0 < y1 ? 1 : -1;
-    int32_t err = dx + dy;
-    for (;;) {
-        dab(d, x0, y0, c);
-        if (x0 == x1 && y0 == y1) {
-            break;
-        }
-        int32_t e2 = 2 * err;
-        if (e2 >= dy) {
-            err += dy;
-            x0 += sx;
-        }
-        if (e2 <= dx) {
-            err += dx;
-            y0 += sy;
-        }
-    }
+    segment(d, x0, y0, x1, y1, c);
     pixel_end(d, e);
     return GESSO_OK;
 }
@@ -675,28 +690,7 @@ gesso_status gesso_polygon(gesso_doc *d, const int32_t *xs, const int32_t *ys, u
     }
     for (uint32_t i = 0; i < n; i++) {
         uint32_t j = (i + 1) % n;
-        int32_t x = xs[i];
-        int32_t y = ys[i];
-        int32_t dx = xs[j] > x ? xs[j] - x : x - xs[j];
-        int32_t dy = ys[j] > y ? y - ys[j] : ys[j] - y;
-        int32_t sx = x < xs[j] ? 1 : -1;
-        int32_t sy = y < ys[j] ? 1 : -1;
-        int32_t err = dx + dy;
-        for (;;) {
-            dab(d, x, y, c);
-            if (x == xs[j] && y == ys[j]) {
-                break;
-            }
-            int32_t e2 = 2 * err;
-            if (e2 >= dy) {
-                err += dy;
-                x += sx;
-            }
-            if (e2 <= dx) {
-                err += dx;
-                y += sy;
-            }
-        }
+        segment(d, xs[i], ys[i], xs[j], ys[j], c);
     }
     pixel_end(d, e);
     return GESSO_OK;

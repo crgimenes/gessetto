@@ -168,6 +168,19 @@ static void test_constrain(void) {
     static const char *const diag[] = {"10000", "01000", "00100", "00010", "00001"};
     expect("shift line snaps to 45 degrees", diag);
 
+    fresh(6, 6);
+    ed.tool = TOOL_LINE;
+    editor_press(&ed, 0, 0, 0);
+    editor_release(&ed, 4, 2, EDITOR_SHIFT);
+    static const char *const two[] = {"110000", "001100", "000011", "000000", "000000", "000000"};
+    expect("shift line snaps to 2:1, steps of 2", two);
+    fresh(3, 6);
+    ed.tool = TOOL_LINE;
+    editor_press(&ed, 0, 0, 0);
+    editor_release(&ed, 2, 4, EDITOR_SHIFT);
+    static const char *const tall[] = {"100", "100", "010", "010", "001", "001"};
+    expect("and to 1:2", tall);
+
     fresh(5, 3);
     ed.tool = TOOL_RECT;
     ed.filled = 1;

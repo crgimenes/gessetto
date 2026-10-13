@@ -268,12 +268,24 @@ static void constrain(const editor *e, int32_t *x, int32_t *y, uint32_t mods) {
     int32_t ax = iabs(dx);
     int32_t ay = iabs(dy);
     int line = e->tool == TOOL_LINE || e->tool == TOOL_CURVE;
-    if (line && ax > 2 * ay) {
+    /* Lines snap to the nearest of flat, 2:1, 45 degrees, 1:2 and upright,
+       the pixel-art angles; 2:1 in the pixels covered, so its steps are all
+       2 long. */
+    if (line && 4 * ay < ax) {
         *y = e->y0;
         return;
     }
-    if (line && ay > 2 * ax) {
+    if (line && 4 * ax < ay) {
         *x = e->x0;
+        return;
+    }
+    if (line && (4 * ay < 3 * ax || 4 * ax < 3 * ay)) {
+        int wide = ax > ay;
+        int32_t steps = ((wide ? ax : ay) + 2) / 2;
+        int32_t along = 2 * steps - 1;
+        int32_t across = steps - 1;
+        *x = e->x0 + (dx < 0 ? -1 : 1) * (wide ? along : across);
+        *y = e->y0 + (dy < 0 ? -1 : 1) * (wide ? across : along);
         return;
     }
     int32_t side = ax > ay ? ax : ay;
